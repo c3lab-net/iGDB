@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 
-from geopy.distance import geodesic
 import sqlite3
 import sys
 import networkx as nx
 import matplotlib.pyplot as plt
-import Querying_Database as qdb
-from math import inf
 from networkx.exception import NetworkXNoPath
 from collections import defaultdict
 
@@ -85,43 +82,7 @@ def find_shortest_path(db_file, start_city, start_state, start_country, end_city
     # Close the database connection
     conn.close()
 
-def cloud_region_to_location(region: str):
-    region_to_ip = {"us-west-1": (37.2379, -121.7946),
-                    "us-east-1": (39.0127, -77.5342)}
-
-    if region not in region_to_ip:
-        raise Exception()
-
-    cloud_lat, cloud_lon = region_to_ip[region]
-    nodes_query = f"""SELECT * FROM city_points;"""
-    querier = qdb.queryDatabase("../database/igdb.db")
-    results = querier.execute_query(nodes_query)
-    if not results:
-        raise Exception()
-
-    min_distance, min_city, min_state, min_country = inf, None, None, None
-    for row in results:
-        city = row[0]
-        state = row[1]
-        country = row[2]
-        lat = float(row[3])
-        lon = float(row[4])
-        distance = geodesic((cloud_lat, cloud_lon), (lat, lon))
-        if distance < min_distance:
-            min_distance = distance
-            min_city, min_state, min_country = city, state, country
-
-    print(f"Found location: {min_city, min_state, min_country} for cloud region: {region}", file=sys.stderr)
-    return min_city, min_state, min_country
-
-
 def parse_location(location):
-    try:
-        city, state, country = cloud_region_to_location(location)
-        return city, state, country
-    except:
-        pass
-
     parts = location.split('/')
 
     # Set default values
