@@ -4,6 +4,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import itertools
 from networkx.exception import NetworkXNoPath
+import ast
 
 
 def floatFormatter(number):
@@ -243,18 +244,32 @@ def get_data_from_database(db_file):
     cursor.execute(sql_query)
     datas = cursor.fetchall()
     wktToCities = {}
-    for cable_id, cable_wkt, city_name, city_latitude, city_longitude in datas:
-        if (cable_id, cable_wkt) in wktToCities:
-            wktToCities[(cable_id, cable_wkt)].add(
+    cableIdToWkt = {}
+    for cable_id, cable_wkt, _, _, _ in datas:
+        if cable_id in cableIdToWkt:
+            for path in convert_multilinestring_to_list(cable_wkt):
+                cableIdToWkt[cable_id].add(str(path))
+        else:
+            cableIdToWkt[cable_id] = set()
+            for path in convert_multilinestring_to_list(cable_wkt):
+                cableIdToWkt[cable_id].add(str(path))
+
+    for cable_id, _, city_name, city_latitude, city_longitude in datas:
+        if cable_id in wktToCities:
+            wktToCities[cable_id].add(
                 (city_name, city_latitude, city_longitude))
         else:
-            wktToCities[(cable_id, cable_wkt)] = set()
-            wktToCities[(cable_id, cable_wkt)].add(
+            wktToCities[cable_id] = set()
+            wktToCities[cable_id].add(
                 (city_name, city_latitude, city_longitude))
     conn.close()
-    return wktToCities
 
-def calculate_distance_between_cable_landing_points(wktToCities):
+    for cable_id, cable_wkt, _, _, _ in datas:
+        cableIdToWkt[cable_id] = [ast.literal_eval(str(list_str)) for list_str in cableIdToWkt[cable_id]]
+
+    return wktToCities, cableIdToWkt
+
+def calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt):
     """
     This function take a dict consist of {cable_info: cities_on_the_cable} as input 
     and then calculate all path distance with city pairs on this cable.
@@ -270,12 +285,12 @@ def calculate_distance_between_cable_landing_points(wktToCities):
     
     """
     fail_cities = set()
-    fail_calbes = set()
-    for (cable_id, cable_wkt), cities_info in wktToCities.items():
+    for cable_id, cities_info in wktToCities.items():
         
         # Build up the graph for cable
-        path_list = convert_multilinestring_to_list(cable_wkt)
-        graph = construct_graph_with_networkx(path_list)
+        # path_list = convert_multilinestring_to_list(cable_wkt)
+        cable_id_path_list = cableIdToWkt[cable_id]
+        graph = construct_graph_with_networkx(cable_id_path_list)
         
         # get all city pairs on the cable
         city_pairs = list(itertools.combinations(cities_info, 2))
@@ -297,19 +312,21 @@ def calculate_distance_between_cable_landing_points(wktToCities):
                     shortest_path_length = nx.shortest_path_length(
                         graph, source=start_city, target=end_city, weight='weight')
                     print(
-                        f"city {city_pair[0][0]}, {start_city}, city {city_pair[1][0]}, {end_city}  has shortest_path_length {shortest_path_length} consist of {shortest_path}")
+                        f"city {city_pair[0][0]}, {start_city}, city {city_pair[1][0]}, {end_city} on {cable_id} has shortest_path_length {shortest_path_length} consist of {shortest_path}")
                 except NetworkXNoPath:
-                    fail_calbes.add(cable_id)
+                    continue
+                    # print(
+                    #     f"city {city_pair[0][0]}, {start_city}, city {city_pair[1][0]}, {end_city} on {cable_id} does not have shortest_path_length")
             else:
                 if not start_city in graph:
                     fail_cities.add(start_city)
-                    # print(f"city {city_pair[0][0]}, {start_city} not exist in graph for {cable_id}.")
+                    print(f"city {city_pair[0][0]}, {start_city} not exist in graph for {cable_id}.")
                 else:
                     fail_cities.add(end_city)
-                    # print(f"city {city_pair[1][0]}, {end_city} not exist in graph for {cable_id}.")
+                    print(f"city {city_pair[1][0]}, {end_city} not exist in graph for {cable_id}.")
 
 
 if __name__ == "__main__":
-    wktToCities =  get_data_from_database('../database/igdb.db')
-    calculate_distance_between_cable_landing_points(wktToCities)
+    wktToCities, cableIdToWkt =  get_data_from_database('../database/igdb.db')
+    calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt)
     
