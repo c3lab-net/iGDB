@@ -38,48 +38,6 @@ def find_closest_paths(lat: float, lon: float, db_path: str):
     return paths
 
 
-def query_db_for_edges(db_path: str):
-    querier = qdb.queryDatabase(db_path)
-    query = f"""SELECT * FROM standard_paths;"""
-    results = querier.execute_query(query)
-
-    points = defaultdict(list)
-
-    for row in results:
-        fc = row[0]
-        fs = row[1]
-        fcc = row[2]
-        tc = row[3]
-        ts = row[4]
-        tcc = row[5]
-        dist_km = float(row[6])
-        path_wkt = row[7]
-        edge = ((fc, fs, fcc), (tc, ts, tcc))
-
-        linestring = wkt.loads(path_wkt)
-        lons, lats = linestring.coords.xy
-        for lat, lon in zip(lats, lons):
-            points[(lat, lon)].append(linestring)
-
-    print(len(points))
-    return points
-
-
-
-
-def closest_point(lat: float, lon: float, points):
-    min_distance = inf
-    min_lat, min_lon = None, None
-    for lat_, lon_ in points.keys():
-        distance = geodesic((lat_, lon_), (lat, lon))
-        if distance < min_distance:
-            min_distance = distance
-            min_lat = lat_
-            min_lon = lon_
-
-    return min_lat, min_lon
-
-
 def cut(line, distance, add_p):
     # Cuts a line in two at a distance from its starting point
     # This is taken from shapely manual
@@ -112,7 +70,6 @@ if __name__ == "__main__":
     region_to_coords = {"us-west-1": (37.2379, -121.7946),
                         "us-east-1": (39.0127, -77.5342)}
     print(args)
-    points = query_db_for_edges(args.database_path)
     lines = []
     for region, (lat, lon) in region_to_coords.items():
 
