@@ -31,6 +31,15 @@ class queryDatabase:
         results = c.fetchall()
         return results
 
+    def execute_many(self, query_str: str, data):
+        conn = self.create_connection()
+        try:
+            c = conn.cursor()
+            c.executemany(query_str, data)
+            conn.commit()
+        except Error as e:
+            print(e)
+
 if __name__ == "__main__":
     print("You should not run this script by itself. It should be called from iGDB.py")
     f_name = "../database/db_test.db"
