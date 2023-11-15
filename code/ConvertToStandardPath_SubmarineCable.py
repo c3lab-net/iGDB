@@ -4,12 +4,16 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import itertools
 from networkx.exception import NetworkXNoPath
+from geopy.distance import geodesic
 import ast
 
 
 def floatFormatter(number):
     return float("{:.2f}".format(number))
 
+def nodeFormatter(coords):
+    longitude, latitude = coords
+    return (latitude, longitude)
 
 def plot_graph(G):
     """
@@ -76,49 +80,14 @@ def convert_multilinestring_to_list(multilinestring):
 
     return list_of_linestring_lists
 
-
-def haversine(coord1, coord2):
-    """
-    This function take two input coordinates with format: (longtitude, latitude)
-    return the distance between them in kilometer.
-    
-    Parameters:
-    coord1 (tuple(float, float)): start coord
-    coord2 (tuple(float, float)): end coord
-    
-    Returns:
-    distance (float): the distance between two coordinates. 
-    
-    
-    """
-    
-    # Radius of the Earth in kilometers
-    R = 6371.0
-
-    # Coordinates in decimal degrees (e.g. 2.294481 to radians)
-    lat1, lon1 = math.radians(coord1[1]), math.radians(coord1[0])
-    lat2, lon2 = math.radians(coord2[1]), math.radians(coord2[0])
-
-    # Change in coordinates
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-
-    # Haversine formula
-    a = math.sin(dlat/2)**2 + math.cos(lat1) * \
-        math.cos(lat2) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    distance = R * c
-
-    return floatFormatter(distance)
-
 # Helper function to add edge
 
 
 def add_edge(G, point1, point2):
     # Calculate the distance between the two points
-    distance = haversine(point1, point2)
+    distance = geodesic(point1, point2)
     # Add the edge to the graph with distance as weight
-    G.add_edge(point1, point2, weight=distance)
+    G.add_edge(point1, point2, weight=distance.kilometers)
 
 
 def construct_graph_with_networkx(paths):
@@ -137,6 +106,8 @@ def construct_graph_with_networkx(paths):
     """
     # Create a NetworkX graph
     G = nx.Graph()
+
+    paths = [ [nodeFormatter(node) for node in path] for path in paths ]
 
     # Add edges for consecutive points within paths
     for path in paths:
@@ -162,7 +133,7 @@ def construct_graph_with_networkx(paths):
                 if all_other_points:
                     # Find the closest point and its distance
                     closest_point, min_distance = min(
-                        ((other_point, haversine(point, other_point))
+                        ((other_point, geodesic(point, other_point).kilometers)
                             for other_point in all_other_points),
                         key=lambda item: item[1]
                     )
@@ -192,7 +163,7 @@ def verify_graph_with_cities(graph, start_city, end_city, cable_id):
     all_points = set([p for p in graph])
     if not start_city in graph:
         closest_point, min_distance = min(
-            ((other_point, haversine(start_city, other_point))
+            ((other_point, geodesic(start_city, other_point).kilometers)
              for other_point in all_points),
             key=lambda item: item[1]
         )
@@ -204,7 +175,7 @@ def verify_graph_with_cities(graph, start_city, end_city, cable_id):
             # print(f"{start_city}, {closest_point} can not be merged with distance: {min_distance} for calbe {cable_id}")
     if not end_city in graph:
         closest_point, min_distance = min(
-            ((other_point, haversine(end_city, other_point))
+            ((other_point, geodesic(end_city, other_point).kilometers)
              for other_point in all_points),
             key=lambda item: item[1]
         )
@@ -235,7 +206,7 @@ def get_data_from_database(db_file):
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """
-    SELECT sc.cable_id, sc.cable_wkt, clp.city_name, lp.latitude, lp.longitude
+    SELECT sc.cable_id, sc.cable_wkt, clp.city_name, clp.state_province, clp.country, lp.latitude, lp.longitude
     FROM submarine_cables sc, cable_landing_points clp, landing_points lp
     WHERE sc.cable_id = clp.cable_id 
     AND clp.city_name = lp.city_name 
@@ -245,7 +216,7 @@ def get_data_from_database(db_file):
     datas = cursor.fetchall()
     wktToCities = {}
     cableIdToWkt = {}
-    for cable_id, cable_wkt, _, _, _ in datas:
+    for cable_id, cable_wkt, _, _, _, _, _ in datas:
         if cable_id in cableIdToWkt:
             for path in convert_multilinestring_to_list(cable_wkt):
                 cableIdToWkt[cable_id].add(str(path))
@@ -254,20 +225,39 @@ def get_data_from_database(db_file):
             for path in convert_multilinestring_to_list(cable_wkt):
                 cableIdToWkt[cable_id].add(str(path))
 
-    for cable_id, _, city_name, city_latitude, city_longitude in datas:
+    for cable_id, _, city_name, city_state, city_country, city_latitude, city_longitude in datas:
         if cable_id in wktToCities:
             wktToCities[cable_id].add(
-                (city_name, city_latitude, city_longitude))
+                (city_name, city_state, city_country, city_latitude, city_longitude))
         else:
             wktToCities[cable_id] = set()
             wktToCities[cable_id].add(
-                (city_name, city_latitude, city_longitude))
+                (city_name, city_state, city_country, city_latitude, city_longitude))
     conn.close()
 
-    for cable_id, cable_wkt, _, _, _ in datas:
+    for cable_id, cable_wkt, _, _, _, _, _ in datas:
         cableIdToWkt[cable_id] = [ast.literal_eval(str(list_str)) for list_str in cableIdToWkt[cable_id]]
 
     return wktToCities, cableIdToWkt
+
+def list_to_linestring(coords_list):
+    """
+    Converts a list of coordinate tuples into a WKT LINESTRING format.
+
+    Parameters:
+    coords_list (list): A list of tuples, each representing a latitude and longitude pair.
+
+    Returns:
+    str: A WKT LINESTRING representation of the input coordinates.
+    """
+    # Convert each tuple in the list to a string, formatted as "longitude latitude"
+    coords_str_list = [f"{lon} {lat}" for lat, lon in coords_list]
+
+    # Join all the coordinate strings with a comma and space
+    linestring = ', '.join(coords_str_list)
+
+    # Return the formatted LINESTRING
+    return f"LINESTRING({linestring})"
 
 def calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt):
     """
@@ -285,8 +275,8 @@ def calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt):
     
     """
     fail_cities = set()
+    submarine_standard_paths = []
     for cable_id, cities_info in wktToCities.items():
-        
         # Build up the graph for cable
         # path_list = convert_multilinestring_to_list(cable_wkt)
         cable_id_path_list = cableIdToWkt[cable_id]
@@ -295,38 +285,95 @@ def calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt):
         # get all city pairs on the cable
         city_pairs = list(itertools.combinations(cities_info, 2))
         
+        
         # calculate each city pair distance on upper graph
         for city_pair in city_pairs:
             # format the start city and end city and verify them on the graph.
-            start_city = (floatFormatter(
-                city_pair[0][2]), floatFormatter(city_pair[0][1]))
-            end_city = (floatFormatter(
-                city_pair[1][2]), floatFormatter(city_pair[1][1]))
+            start_city, end_city = city_pair
+            start_city_name, start_city_state, start_city_country, start_city_lati, start_city_longti = start_city
+            end_city_name, end_city_state, end_city_country, end_city_lati, end_city_longti = end_city
+
+            start_city_coord = (start_city_lati, start_city_longti)
+            end_city_coord = (end_city_lati, end_city_longti)
             graph = verify_graph_with_cities(
-                graph, start_city, end_city, cable_id)
+                graph, start_city_coord, end_city_coord, cable_id)
             
-            if (start_city in graph and end_city in graph):
+            if (start_city_coord in graph and end_city_coord in graph):
                 try:
                     shortest_path = nx.shortest_path(
-                        graph, source=start_city, target=end_city, weight='weight')
+                        graph, source=start_city_coord, target=end_city_coord, weight='weight')
                     shortest_path_length = nx.shortest_path_length(
-                        graph, source=start_city, target=end_city, weight='weight')
-                    print(
-                        f"city {city_pair[0][0]}, {start_city}, city {city_pair[1][0]}, {end_city} on {cable_id} has shortest_path_length {shortest_path_length} consist of {shortest_path}")
+                        graph, source=start_city_coord, target=end_city_coord, weight='weight')
+                    # print(
+                    #      f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} has shortest_path_length {shortest_path_length} consist of {shortest_path}")
+                    submarine_standard_paths.append(((start_city_name, start_city_state, start_city_country, 
+                               end_city_name, end_city_state, end_city_country, 
+                               shortest_path_length, list_to_linestring(shortest_path))))
                 except NetworkXNoPath:
                     continue
                     # print(
-                    #     f"city {city_pair[0][0]}, {start_city}, city {city_pair[1][0]}, {end_city} on {cable_id} does not have shortest_path_length")
+                    #     f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} does not have shortest_path_length")
             else:
-                if not start_city in graph:
-                    fail_cities.add(start_city)
-                    print(f"city {city_pair[0][0]}, {start_city} not exist in graph for {cable_id}.")
+                if not start_city_coord in graph:
+                    fail_cities.add(start_city_coord)
+                    print(f"city {start_city_name}, {start_city_coord} not exist in graph for {cable_id}.")
                 else:
-                    fail_cities.add(end_city)
-                    print(f"city {city_pair[1][0]}, {end_city} not exist in graph for {cable_id}.")
+                    fail_cities.add(end_city_coord)
+                    print(f"city {end_city_name}, {end_city_coord} not exist in graph for {cable_id}.")
+    return submarine_standard_paths
 
+def insert_submarine_standard_paths_to_database(db_file, submarine_standard_paths):
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+
+    # Check if the table exists
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='submarine_standard_paths';")
+    table_exists = cursor.fetchone()
+
+    # If the table exists, drop it
+    if table_exists:
+        cursor.execute("DROP TABLE submarine_standard_paths;")
+
+    # print("Table dropped")
+
+    cursor.execute("CREATE TABLE submarine_standard_paths ( \
+        from_city TEXT, \
+        from_state TEXT, \
+        from_country TEXT, \
+        to_city TEXT, \
+        to_state TEXT, \
+        to_country TEXT, \
+        distance_km REAL, \
+        path_wkt TEXT \
+    );")
+
+    # print("Table created.")
+
+    for submarine_standard_path in submarine_standard_paths:
+        # Execute insert query
+                cursor.execute("INSERT INTO submarine_standard_paths (from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", submarine_standard_path)
+                # print("One data inserted")
+                
+    conn.commit()
+    conn.close()
+
+def submarine_standard_path_table_tester(db_file):
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    sql_query = """
+    SELECT ssp.from_city, ssp.from_state, ssp.from_country, ssp.to_city, ssp.to_state, ssp.to_country, ssp.distance_km, ssp.path_wkt
+    FROM submarine_standard_paths ssp
+    """
+    cursor.execute(sql_query)
+    datas = cursor.fetchall()
+    for data in datas:
+        print(data)
+    conn.close()
 
 if __name__ == "__main__":
-    wktToCities, cableIdToWkt =  get_data_from_database('../database/igdb.db')
-    calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt)
-    
+    db_file = '../database/igdb.db'
+    wktToCities, cableIdToWkt =  get_data_from_database(db_file)
+    submarine_standard_paths = calculate_distance_between_cable_landing_points(wktToCities, cableIdToWkt)
+    print(len(submarine_standard_paths))
+    insert_submarine_standard_paths_to_database(db_file, submarine_standard_paths)
+    submarine_standard_path_table_tester(db_file)
