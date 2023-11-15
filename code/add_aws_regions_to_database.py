@@ -6,9 +6,6 @@ from geopy.distance import geodesic
 from math import inf
 from shapely import wkt, shortest_line, LineString, Point
 
-from linestring_to_kml import linestrings_to_kml
-
-
 def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float):
     querier = qdb.queryDatabase(db_path)
     query = f"""SELECT * FROM standard_paths;"""
@@ -94,6 +91,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # TODO get these from a file, etc
     region_to_coords = {"us-west-1": (37.2379, -121.7946),
                         "us-east-1": (39.0127, -77.5342)}
     print(args)
@@ -115,6 +113,7 @@ if __name__ == "__main__":
 
         add_cloud_regions_to_db(args.database_path, new_rows)
 
-    kml_string = linestrings_to_kml([""]*len(lines), lines)
-    with open("split_linestrings.kml", "wb") as kml_file:
-        kml_file.write(kml_string)
+#    TODO add this back in once with a cmd line option
+#    kml_string = linestrings_to_kml([""]*len(lines), lines)
+#    with open("split_linestrings.kml", "wb") as kml_file:
+#        kml_file.write(kml_string)
