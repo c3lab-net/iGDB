@@ -10,3 +10,5 @@ ripe.atlas.cousteau
 rtree
 selenium
 shapely
+fastapi
+uvicorn

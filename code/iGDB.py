@@ -23,6 +23,7 @@ import Creating_OrgKML
 import Querying_Database
 import Plotting_ASNLocs
 import Plotting_ShortestPath
+import Serving_API
 
 class iGDB:
     def __init__(self, cli_args):
@@ -40,6 +41,7 @@ class iGDB:
         self.buffer_choice = False
         self.graph_shortest_path = False
         self.create_kml = False
+        self.serve_api = False
         self.organization = ""
         self.start_loc = ""
         self.end_loc = ""
@@ -74,6 +76,8 @@ class iGDB:
                 self.graph_shortest_path = True
             elif a == "-k" or "--create_kml" in a:
                 self.create_kml = True
+            elif a == "-api" or "--api" in a:
+                self.serve_api = True
             elif self.update_db and self.update_location == "":
                 if a.lower() in self.valid_remote_locations:
                     self.update_location = a.lower()
@@ -135,6 +139,8 @@ class iGDB:
             self.plot_shortest_physical_path()
         elif self.create_kml:
             self.create_org_kml()
+        elif self.serve_api:
+            self.serve_rest_api()
         else:
             self.print_help_func()
 
@@ -178,6 +184,8 @@ class iGDB:
         print("\t-u or --update <location>")
         print("\t\tqueries remote <location> ", end='')
         print("for updates to the local unprocessed information.")
+        print("\t-api or --api")
+        print("\t\tServe selected iGDB data over REST API.")
         loc_string = ""
         for loc in self.valid_remote_locations:
             loc_string += f"'{loc}', "
@@ -326,6 +334,9 @@ class iGDB:
 
         my_creator = Creating_OrgKML.CreatingOrgKML(db_file, self.organization, self.plot_path)
         my_creator.create_kml()
+
+    def serve_rest_api(self):
+        Serving_API.run()
 
 if __name__ == "__main__":
     my_igdb = iGDB(sys.argv)
