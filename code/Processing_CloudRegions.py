@@ -41,6 +41,7 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
     return paths
 
 # Taken from stackoverflow
+# https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
 def cut(line, distance, add_p):
     # Cuts a line in two at a distance from its starting point
     # This is taken from shapely manual
@@ -92,8 +93,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # TODO get these from a file, etc
-    region_to_coords = {"us-west-1": (37.2379, -121.7946),
-                        "us-east-1": (39.0127, -77.5342)}
+    region_to_coords = {"aws:us-west-1": (37.2379, -121.7946),
+                        "aws:us-east-1": (39.0127, -77.5342)}
     print(args)
     lines = []
     for region, (lat, lon) in region_to_coords.items():
@@ -103,12 +104,13 @@ if __name__ == "__main__":
 
         new_rows = []
         for row in rows:
-            ls = wkt.loads(row[7])
-            d = ls.project(Point(lon, lat))
-            l1, l2 = cut(ls, d, Point(lon, lat))
+            linestring: LineString = wkt.loads(row[7])
+            distance: float = linestring.project(Point(lon, lat))
+            l1, l2 = cut(linestring, distance, Point(lon, lat))
             lines.append(l1)
             lines.append(l2)
-            new_rows.append((region, "", "", row[3], row[4], row[5], distance_of_linestring(l1), wkt.dumps(l1), ""))
+            new_rows.append((row[0], row[1], row[2], region, "", "", distance_of_linestring(l1), wkt.dumps(l1), ""))
+            new_rows.append((region, "", "", row[3], row[4], row[5], distance_of_linestring(l2), wkt.dumps(l2), ""))
             print(f"{row[0]} to {row[3]}")
 
         add_cloud_regions_to_db(args.database_path, new_rows)
