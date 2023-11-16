@@ -10,6 +10,7 @@ from math import inf
 from shapely import wkt, shortest_line, LineString, Point
 from sqlite3 import Row as sqlite_Row
 
+from Create_KML import write_linestrings_to_file, LineStringToKML
 
 def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float) -> gpd.GeoDataFrame:
     querier = qdb.queryDatabase(db_path)
@@ -89,7 +90,7 @@ if __name__ == "__main__":
                         "aws:us-east-1": (39.0127, -77.5342),
                        }
     print(args)
-    lines = []
+    new_rows = []
     for region, (lat, lon) in region_to_coords.items():
 
         rows = find_closest_paths(lat, lon, args.database_path, args.max_distance)
@@ -100,13 +101,20 @@ if __name__ == "__main__":
             linestring: LineString = wkt.loads(row[7])
             distance: float = linestring.project(Point(lon, lat))
             l1, l2 = cut(linestring, distance, Point(lon, lat))
-            lines.append(l1)
-            lines.append(l2)
             new_rows.append((row[0], row[1], row[2], region, "", "", distance_of_linestring(l1), wkt.dumps(l1), ""))
             new_rows.append((region, "", "", row[3], row[4], row[5], distance_of_linestring(l2), wkt.dumps(l2), ""))
             print(f"{row[0]} to {row[3]}")
 
-        add_cloud_regions_to_db(args.database_path, new_rows)
+    add_cloud_regions_to_db(args.database_path, new_rows)
+    
+    print(f"Added {len(new_rows)} rows to database")
+
+    lines = []
+    for row in new_rows:
+        lines.append(LineStringToKML(linestring=wkt.loads(row[7]), name=f"{row[0]} {row[3]}"))
+    write_linestrings_to_file("linestrings.kml", lines)
+
+    
 
 #    TODO add this back in once with a cmd line option
 #    kml_string = linestrings_to_kml([""]*len(lines), lines)
