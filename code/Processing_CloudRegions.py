@@ -1,44 +1,61 @@
 import argparse
 import Querying_Database as qdb
+import geopandas as gpd
+
+import pandas as pd
 
 from collections import defaultdict
 from geopy.distance import geodesic
 from math import inf
 from shapely import wkt, shortest_line, LineString, Point
+from sqlite3 import Row as sqlite_Row
+
 
 def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float):
     querier = qdb.queryDatabase(db_path)
     query = f"""SELECT * FROM standard_paths;"""
-    results = querier.execute_query(query)
+    results = querier.execute_query(query, row_factory=sqlite_Row)
     
     paths = []
-    for row in results:
-        fc = row[0]
-        fs = row[1]
-        fcc = row[2]
-        tc = row[3]
-        ts = row[4]
-        tcc = row[5]
-        dist_km = float(row[6])
-        path_wkt = row[7]
-        edge = ((fc, fs, fcc), (tc, ts, tcc))
 
+    df = pd.DataFrame(results, columns=results[0].keys())
 
-        linestring = wkt.loads(path_wkt)
-        # The linestring is an existing edge in the graph, and the point is the
-        # location of the cloud region. We get the shortest line between these
-        # two geometries, which gives us the shortest distance from a cloud
-        # region to an existing edge in the graph.
-        ps = shortest_line(Point(lon, lat), linestring).coords
-        # Since the WKT format is (lon, lat) and geopy.geodesic takes
-        # (lat, lon) pairs, we need to switch these.
-        p1 = (ps[0][1], ps[0][0])
-        p2 = (ps[1][1], ps[1][0])
-        distance = geodesic(p1, p2)
-        if distance.km < max_distance:
-            paths.append(row)
+    gs = gpd.GeoSeries.from_wkt(df['path_wkt'])
+    geodf = gpd.GeoDataFrame(df, geometry=gs, crs="EPSG:4326")
+    geodf["intersection"] = geodf["geometry"].shortest_line(Point(lon, lat))
+    geodf["distance"] = geodf["intersection"].to_crs("EPSG:3857").length / 1000
 
-    return paths
+    return list(geodf[geodf["distance"] < 5].itertuples(index=False))
+
+#    for row in results:
+#        fc = row[0]
+#        fs = row[1]
+#        fcc = row[2]
+#        tc = row[3]
+#        ts = row[4]
+#        tcc = row[5]
+#        dist_km = float(row[6])
+#        path_wkt = row[7]
+#        edge = ((fc, fs, fcc), (tc, ts, tcc))
+#
+#
+#        linestring = wkt.loads(path_wkt)
+#        
+#        # The linestring is an existing edge in the graph, and the point is the
+#        # location of the cloud region. We get the shortest line between these
+#        # two geometries, which gives us the shortest distance from a cloud
+#        # region to an existing edge in the graph.
+#        
+#        ps = shortest_line(Point(lon, lat), linestring).coords
+#        # Since the WKT format is (lon, lat) and geopy.geodesic takes
+#        # (lat, lon) pairs, we need to switch these.
+#        p1 = (ps[0][1], ps[0][0])
+#        p2 = (ps[1][1], ps[1][0])
+#        distance = geodesic(p1, p2)
+#        if distance.km < max_distance:
+#            paths.append(row)
+#
+#    return paths
 
 # Taken from stackoverflow
 # https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
@@ -93,14 +110,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # TODO get these from a file, etc
-    region_to_coords = {"aws:us-west-1": (37.2379, -121.7946),
-                        "aws:us-east-1": (39.0127, -77.5342)}
+    region_to_coords = {
+                        #"aws:us-west-1": (37.2379, -121.7946),
+                        "aws:us-east-1": (39.0127, -77.5342),
+                       }
     print(args)
     lines = []
     for region, (lat, lon) in region_to_coords.items():
 
         rows = find_closest_paths(lat, lon, args.database_path, args.max_distance)
         print(f"Found {len(rows)} rows")
+
+        print(rows)
+        print(rows[0][7])
 
         new_rows = []
         for row in rows:

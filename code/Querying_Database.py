@@ -21,8 +21,10 @@ class queryDatabase:
             print(e)
         return conn
 
-    def execute_query(self, query_str):
+    def execute_query(self, query_str, row_factory=None):
         conn = self.create_connection()
+        if row_factory:
+            conn.row_factory = row_factory
         try:
             c = conn.cursor()
             c.execute(query_str)
