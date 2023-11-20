@@ -263,7 +263,6 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
 
 
     """
-    fail_cities = set()
     submarine_standard_paths = []
     for cable_id, cities_info in cable_id_to_cities.items():
         # Build up the graph for cable
