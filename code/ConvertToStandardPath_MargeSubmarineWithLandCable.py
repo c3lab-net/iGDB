@@ -1,11 +1,14 @@
 import sqlite3
 import math
+from haversine import haversine
+
 
 def get_landing_point_coord_from_database(db_file):
     landing_point_coord = []
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute('SELECT lp.latitude, lp.longitude, lp.city_name, lp.country FROM landing_points lp;')
+    cursor.execute(
+        'SELECT lp.latitude, lp.longitude, lp.city_name, lp.state_province, lp.country FROM landing_points lp;')
     datas = cursor.fetchall()
     for data in datas:
         landing_point_coord.append(data)
@@ -13,11 +16,12 @@ def get_landing_point_coord_from_database(db_file):
     conn.close()
     return set(landing_point_coord)
 
+
 def get_phys_nodes_coord_from_database(db_file):
     phys_nodes_coord = []
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute('SELECT pn.latitude, pn.longitude, pn.city, pn.country \
+    cursor.execute('SELECT pn.latitude, pn.longitude, pn.city, pn.state, pn.country \
                     FROM phys_nodes pn \
                     WHERE EXISTS ( \
                         SELECT 1  \
@@ -30,48 +34,82 @@ def get_phys_nodes_coord_from_database(db_file):
     conn.close()
     return set(phys_nodes_coord)
 
-def haversine(coord1, coord2):
-    R = 6371.0
 
-    # Coordinates in decimal degrees (e.g. 2.294481 to radians)
-    lat1, lon1 = math.radians(coord1[1]), math.radians(coord1[0])
-    lat2, lon2 = math.radians(coord2[1]), math.radians(coord2[0])
+def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping):
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
 
-    # Change in coordinates
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
+    # Check if the table exists
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='submarine_to_standard_paths';")
+    table_exists = cursor.fetchone()
 
-    # Haversine formula
-    a = math.sin(dlat/2)**2 + math.cos(lat1) * \
-        math.cos(lat2) * math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    distance = R * c
+    # If the table exists, drop it
+    if table_exists:
+        cursor.execute("DROP TABLE submarine_to_standard_paths;")
 
-    return distance
+    cursor.execute("CREATE TABLE submarine_to_standard_paths ( \
+        from_city TEXT, \
+        from_state TEXT, \
+        from_country TEXT, \
+        to_city TEXT, \
+        to_state TEXT, \
+        to_country TEXT \
+    );")
+
+    for key, value in city_mapping.items():
+        from_city, from_state, from_country = key
+        to_city, to_state, to_country = value
+        # Execute insert query
+        cursor.execute("INSERT INTO submarine_to_standard_paths (from_city, from_state, from_country, to_city, to_state, to_country) VALUES (?, ?, ?, ?, ?, ?)",
+                       (from_city, from_state, from_country, to_city, to_state, to_country))
+
+    conn.commit()
+    conn.close()
+
+
+def get_all_submarine_to_standard_paths_pairs(db_file):
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    sql_query = """
+    SELECT stsp.from_city, stsp.from_state, stsp.from_country, stsp.to_city, stsp.to_state, stsp.to_country
+    FROM submarine_to_standard_paths stsp
+    """
+    cursor.execute(sql_query)
+    datas = cursor.fetchall()
+    conn.close()
+
+    return datas
 
 
 if __name__ == "__main__":
-    landing_point_coords = get_landing_point_coord_from_database('../database/igdb.db')
-    phys_nodes_coords = get_phys_nodes_coord_from_database('../database/igdb.db')
-    print(len(landing_point_coords))
-    print(len(phys_nodes_coords))
-    mapping = {}
-    for landing_point_lati, landing_point_longti, landing_point_city, landing_point_country in landing_point_coords:
+    db_file = '../database/igdb.db'
+    landing_point_coords = get_landing_point_coord_from_database(db_file)
+    phys_nodes_coords = get_phys_nodes_coord_from_database(db_file)
+    city_mapping = {}
+    for landing_point_lati, landing_point_longti, landing_point_city, landing_point_state, landing_point_country in landing_point_coords:
         landing_point_coord = (landing_point_lati, landing_point_longti)
         max_distance = float('inf')
         best_city = None
+        best_state = None
         best_country = None
-        for phys_nodes_lati, phys_nodes_longti, phys_nodes_city, phys_nodes_country in phys_nodes_coords:
+        for phys_nodes_lati, phys_nodes_longti, phys_nodes_city, phys_nodes_state, phys_nodes_country in phys_nodes_coords:
             phys_nodes_coord = (phys_nodes_lati, phys_nodes_longti)
             if not isinstance(phys_nodes_coord[0], float):
                 continue
-            currdistance  = haversine(landing_point_coord, phys_nodes_coord)
-            if(currdistance < max_distance):
+            currdistance = haversine(landing_point_coord, phys_nodes_coord)
+            if (currdistance < max_distance):
                 best_city = phys_nodes_city
                 max_distance = currdistance
+                best_state = phys_nodes_state
                 best_country = phys_nodes_country
-        mapping[landing_point_city] = best_city
-        if(max_distance > 160):
-            print(f"warning for city {landing_point_city}, {landing_point_country} and {best_city}, {best_country} with distance {max_distance}")
+        if (max_distance > 160):
+            continue
+            # print(f"warning for city {landing_point_city}, {landing_point_country} and {best_city}, {best_country} with distance {max_distance}")
+        else:
+            city_mapping[(landing_point_city, landing_point_state, landing_point_country)] = (
+                best_city, best_state, best_country)
 
-    # print(mapping)
+    insert_submarine_city_mapping_to_standard_path_city_database(
+        db_file, city_mapping)
+    get_all_submarine_to_standard_paths_pairs(db_file)

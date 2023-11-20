@@ -8,6 +8,9 @@ import ast
 
 
 def floatFormatter(number):
+    """After verification, there is no city that has the same coordinate in 0.01 granuality
+    to avoid the precious problem lead to float number, we introduce this floatFormatter to
+    format coordinates."""
     return float("{:.2f}".format(number))
 
 
@@ -163,30 +166,17 @@ def verify_graph_with_cities(graph, start_city, end_city, cable_id):
 
     """
     all_points = set([p for p in graph])
-    if not start_city in graph:
-        closest_point, min_distance = min(
-            ((other_point, geodesic(start_city, other_point).kilometers)
-             for other_point in all_points),
-            key=lambda item: item[1]
-        )
-        threshold = 125
-        # Add edge if the closest distance is under the threshold and not in the current path
-        if min_distance < threshold:
-            add_edge(graph, start_city, closest_point)
-        # else:
-            # print(f"{start_city}, {closest_point} can not be merged with distance: {min_distance} for calbe {cable_id}")
-    if not end_city in graph:
-        closest_point, min_distance = min(
-            ((other_point, geodesic(end_city, other_point).kilometers)
-             for other_point in all_points),
-            key=lambda item: item[1]
-        )
-        threshold = 125
-        # Add edge if the closest distance is under the threshold and not in the current path
-        if min_distance < threshold:
-            add_edge(graph, end_city, closest_point)
-        # else:
-        #     print(f"{end_city}, {closest_point} can not be merged with distance: {min_distance} for calbe {cable_id}")
+    for city in [start_city, end_city]:
+        if not city in graph:
+            closest_point, min_distance = min(
+                ((other_point, geodesic(city, other_point).kilometers)
+                 for other_point in all_points),
+                key=lambda item: item[1]
+            )
+            threshold = 125
+            # Add edge if the closest distance is under the threshold and not in the current path
+            if min_distance < threshold:
+                add_edge(graph, city, closest_point)
     return graph
 
 
@@ -225,13 +215,10 @@ def get_data_from_database(db_file):
             cable_id_to_wkt[cable_id].add(str(path))
 
     for cable_id, _, city_name, city_state, city_country, city_latitude, city_longitude in datas:
-        if cable_id in cable_id_to_cities:
-            cable_id_to_cities[cable_id].add(
-                (city_name, city_state, city_country, city_latitude, city_longitude))
-        else:
+        if cable_id not in cable_id_to_cities:
             cable_id_to_cities[cable_id] = set()
-            cable_id_to_cities[cable_id].add(
-                (city_name, city_state, city_country, city_latitude, city_longitude))
+        cable_id_to_cities[cable_id].add(
+            (city_name, city_state, city_country, city_latitude, city_longitude))
     conn.close()
 
     for cable_id, cable_wkt, _, _, _, _, _ in datas:
@@ -300,32 +287,22 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
             graph = verify_graph_with_cities(
                 graph, start_city_coord, end_city_coord, cable_id)
 
-            if (start_city_coord in graph and end_city_coord in graph):
-                try:
-                    shortest_path = nx.shortest_path(
-                        graph, source=start_city_coord, target=end_city_coord, weight='weight')
-                    shortest_path_length = nx.shortest_path_length(
-                        graph, source=start_city_coord, target=end_city_coord, weight='weight')
-                    # print(
-                    #      f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} has shortest_path_length {shortest_path_length} consist of {shortest_path}")
-                    submarine_standard_paths.append(((start_city_name, start_city_state, start_city_country,
-                                                      end_city_name, end_city_state, end_city_country,
-                                                      shortest_path_length, coord_list_to_linestring(shortest_path))))
-                except NetworkXNoPath:
-                    '''This will catch the exception when the cities on the cable will not form a connected graph.
-                    which means there is no path betweent the city pair. We simply omit it by continue.'''
-                    continue
-                    # print(
-                    #     f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} does not have shortest_path_length")
-            else:
-                if not start_city_coord in graph:
-                    fail_cities.add(start_city_coord)
-                    print(
-                        f"city {start_city_name}, {start_city_coord} not exist in graph for {cable_id}.")
-                else:
-                    fail_cities.add(end_city_coord)
-                    print(
-                        f"city {end_city_name}, {end_city_coord} not exist in graph for {cable_id}.")
+            try:
+                shortest_path = nx.shortest_path(
+                    graph, source=start_city_coord, target=end_city_coord, weight='weight')
+                shortest_path_length = nx.shortest_path_length(
+                    graph, source=start_city_coord, target=end_city_coord, weight='weight')
+                # print(
+                #      f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} has shortest_path_length {shortest_path_length} consist of {shortest_path}")
+                submarine_standard_paths.append(((start_city_name, start_city_state, start_city_country,
+                                                  end_city_name, end_city_state, end_city_country,
+                                                  shortest_path_length, coord_list_to_linestring(shortest_path))))
+            except NetworkXNoPath:
+                '''This will catch the exception when the cities on the cable will not form a connected graph.
+                which means there is no path betweent the city pair. We simply omit it by continue.'''
+                continue
+                # print(
+                #     f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} does not have shortest_path_length")
     return submarine_standard_paths
 
 
