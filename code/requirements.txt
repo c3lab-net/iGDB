@@ -1,5 +1,6 @@
 geopandas
 graphqlclient
+haversine
 matplotlib
 networkx
 numpy
