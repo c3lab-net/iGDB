@@ -21,8 +21,10 @@ class queryDatabase:
             print(e)
         return conn
 
-    def execute_query(self, query_str):
+    def execute_query(self, query_str, row_factory=None):
         conn = self.create_connection()
+        if row_factory:
+            conn.row_factory = row_factory
         try:
             c = conn.cursor()
             c.execute(query_str)
@@ -30,6 +32,15 @@ class queryDatabase:
             print(e)
         results = c.fetchall()
         return results
+
+    def execute_many(self, query_str: str, data):
+        conn = self.create_connection()
+        try:
+            c = conn.cursor()
+            c.executemany(query_str, data)
+            conn.commit()
+        except Error as e:
+            print(e)
 
 if __name__ == "__main__":
     print("You should not run this script by itself. It should be called from iGDB.py")
