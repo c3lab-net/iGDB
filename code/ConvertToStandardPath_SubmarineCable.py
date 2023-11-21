@@ -177,6 +177,9 @@ def verify_graph_with_cities(graph, start_city, end_city, cable_id):
             # Add edge if the closest distance is under the threshold and not in the current path
             if min_distance < threshold:
                 add_edge(graph, city, closest_point)
+            else:
+                raise Exception(
+                    f"The minimum distance {min_distance} between {city}, {closest_point} is more than the threshold of {threshold}.")
     return graph
 
 
