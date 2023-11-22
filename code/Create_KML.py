@@ -11,7 +11,7 @@ from dataclasses import dataclass
 @dataclass
 class LineStringToKML:
     linestring: LineString
-    name: Optional[str]
+    name: Optional[str] = None
     description: Optional[str] = None
 
     def convert_to_xml_placemark(self) -> ET.Element:

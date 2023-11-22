@@ -80,6 +80,10 @@ if __name__ == "__main__":
                         lie along an edge. If the location of the cloud region
                         is less than this distance away from an existing edge,
                         we consider the region to be connected to the edge.""")
+    parser.add_argument("--save-kml-file", nargs="?", const="linestrings.kml", default="",
+                        help="""Write the newly created edges to a KML file. If the
+                        command line option is given without a filename, the default is
+                        `linestrings.kml`.""")
 
 
     args = parser.parse_args()
@@ -96,7 +100,6 @@ if __name__ == "__main__":
         rows = find_closest_paths(lat, lon, args.database_path, args.max_distance)
         print(f"Found {len(rows)} rows")
 
-        new_rows = []
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
             distance: float = linestring.project(Point(lon, lat))
@@ -109,14 +112,8 @@ if __name__ == "__main__":
     
     print(f"Added {len(new_rows)} rows to database")
 
-    lines = []
-    for row in new_rows:
-        lines.append(LineStringToKML(linestring=wkt.loads(row[7]), name=f"{row[0]} {row[3]}"))
-    write_linestrings_to_file("linestrings.kml", lines)
-
-    
-
-#    TODO add this back in once with a cmd line option
-#    kml_string = linestrings_to_kml([""]*len(lines), lines)
-#    with open("split_linestrings.kml", "wb") as kml_file:
-#        kml_file.write(kml_string)
+    if args.save_kml_file:
+        lines = []
+        for row in new_rows:
+            lines.append(LineStringToKML(linestring=wkt.loads(row[7]), name=f"{row[0]} {row[3]}"))
+        write_linestrings_to_file(args.save_kml_file, lines)
