@@ -37,8 +37,13 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 def cut(line, distance, add_p):
     # Cuts a line in two at a distance from its starting point
     # This is taken from shapely manual
-    if distance <= 0.0 or distance >= line.length:
-        return [LineString(line)]
+    if distance <= 0:
+        return [LineString(), LineString(line)]
+    elif distance >= line.length:
+        return [LineString(line), LineString()]
+#    if distance <= 0.0 or distance >= line.length:
+#        print(distance, line, line.length, add_p)
+#        return [LineString(line)]
     coords = list(line.coords)
     for i, p in enumerate(coords):
         pd = line.project(Point(p))
@@ -89,13 +94,13 @@ def add_cloud_regions_to_standard_paths(db_path: str,
     print('Adding cloud regions to standard paths table...')
     region_to_coords = parse_cloud_region_coordinates(cloud_region_coordinates_csv)
 
+    new_rows = []
     lines = []
     for region, (lat, lon) in region_to_coords.items():
         print(f"Adding {region} ({lat}, {lon}) to standard paths table...")
         rows = find_closest_paths(lat, lon, db_path, max_distance_km)
         print(f"Found {len(rows)} rows")
 
-        new_rows = []
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
             distance: float = linestring.project(Point(lon, lat))
@@ -106,8 +111,7 @@ def add_cloud_regions_to_standard_paths(db_path: str,
             new_rows.append((region, "", "", row[3], row[4], row[5], distance_of_linestring(l2), wkt.dumps(l2), ""))
             print(f"{row[0]} to {row[3]}")
 
-        add_cloud_regions_to_db(db_path, new_rows)
-        print()
+    add_cloud_regions_to_db(db_path, new_rows)
 
 #    TODO add this back in once with a cmd line option
 #    kml_string = linestrings_to_kml([""]*len(lines), lines)
