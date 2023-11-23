@@ -20,6 +20,7 @@ import Processing_RIPEAtlas
 import Processing_RIPETraceroutes
 import Processing_Submarine
 import Processing_Voronoi
+import Processing_CloudRegions
 import Creating_Database
 import Creating_OrgKML
 import Querying_Database
@@ -211,6 +212,9 @@ class iGDB:
     def create_db_func(self):
         db_creator = Creating_Database.CreatingDatabase(self.processed_path,
                 self.database_path, self.create_db_name)
+        Processing_CloudRegions.add_cloud_regions_to_standard_paths(
+            self.database_path / self.create_db_name,
+            self.helper_path / 'cloud_regions' / 'cloud_region_coordinates.csv')
         ConvertToStandardPath_SubmarineCable.add_submarine_cable_like_standard_path(
             self.database_path / self.create_db_name)
         ConvertToStandardPath_MergeSubmarineWithLandCable.connect_submarine_cable_to_standard_path(
