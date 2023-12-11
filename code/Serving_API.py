@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MargeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths, floatFormatter
 import sqlite3
@@ -8,6 +8,9 @@ import networkx as nx
 import csv
 from xml.dom.minidom import Document
 from haversine import haversine
+
+from shapely import wkt
+from shapely.geometry import LineString, MultiLineString
 
 # find the closest point for a given coordinate in case it is not in the graph
 
@@ -70,31 +73,30 @@ def reverse_linestring_order(linestring):
 # helper function to get the src/dst coordinate from a wkt path
 
 
-def parse_wkt_linestring(wkt_string):
+def parse_wkt_linestring(wkt_string) -> LineString:
     # Remove the LINESTRING prefix and split the string into coordinate pairs
-    coord_pairs = wkt_string.replace(
-        "LINESTRING(", "").replace(")", "").split(", ")
-
-    # Extract the first and last coordinate pairs
-    first_pair = coord_pairs[0]
-    last_pair = coord_pairs[-1]
-
-    # Convert the coordinate pairs from strings to tuples of floats
-    start_city_coord = tuple(map(float, first_pair.split(" ")))
-    end_city_coord = tuple(map(float, last_pair.split(" ")))
-
-    return start_city_coord, end_city_coord
+    try:
+        return wkt.loads(wkt_string)
+    except Exception as e:
+        print(f"wkt string {wkt_string} is not valid")
+        return None
 
 
 def graph_build_helper(G, coordCityMap, coord_set, path_set, option):
     for from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt in path_set:
 
-        start_city_coord, end_city_coord = parse_wkt_linestring(path_wkt)
+        from_city_info = city_formatter((from_city, from_state, from_country))
+        to_city_info = city_formatter((to_city, to_state, to_country))
+        if from_city_info == to_city_info:
+            continue
+        linestring = parse_wkt_linestring(path_wkt)
+        if linestring is None:
+            print(f"invalid wkt string {path_wkt}")
+            continue
+        start_city_coord = linestring.coords[0]
+        end_city_coord = linestring.coords[-1]
         start_city_coord = coordinate_reverser(start_city_coord)
         end_city_coord = coordinate_reverser(end_city_coord)
-        from_city_info = city_formatter(
-            (from_city, from_state, from_country))
-        to_city_info = city_formatter((to_city, to_state, to_country))
         coordCityMap[start_city_coord] = from_city_info
 
         coord_set.append(start_city_coord)
@@ -109,9 +111,9 @@ def graph_build_helper(G, coordCityMap, coord_set, path_set, option):
             edge_type = 'land'
 
         add_edge(G, from_city_info,
-                    to_city_info, distance_km, path_wkt, start_city_coord, end_city_coord, edge_type)
+                    to_city_info, distance_km, linestring, start_city_coord, end_city_coord, edge_type)
         add_edge(G, to_city_info,
-                    from_city_info, distance_km, reverse_linestring_order(path_wkt), end_city_coord, start_city_coord, edge_type)
+                    from_city_info, distance_km, LineString(linestring.coords[::-1]), end_city_coord, start_city_coord, edge_type)
     return G, coordCityMap, coord_set
 
 
@@ -140,16 +142,21 @@ app = FastAPI()
 
 @app.get("/physical-route/")
 def physical_route(src_latitude: float, src_longitude: float,
-                   dst_latitude: float, dst_longitude: float) -> list[tuple[float, float]]:
+                   dst_latitude: float, dst_longitude: float) -> dict:
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
     # Convert input coordinates to city information
-    src_city_co = find_closest_point(
-        (src_latitude, src_longitude), coord_set)
+    src_city_co = find_closest_point((src_latitude, src_longitude), coord_set)
+    dst_city_co = find_closest_point((dst_latitude, dst_longitude), coord_set)
 
-    dst_city_co = find_closest_point(
-        (dst_latitude, dst_longitude), coord_set)
+    if src_city_co == dst_city_co:
+        return {
+            'routers_latlon': [src_city_co, dst_city_co],
+            'distance_km': 0,
+            'fiber_wkt_paths': MultiLineString([LineString([src_city_co, dst_city_co])]).wkt,
+            'fiber_types': ['land'],
+        }
 
     src_city_info = coordCityMap[src_city_co]
     dst_city_info = coordCityMap[dst_city_co]
@@ -161,10 +168,18 @@ def physical_route(src_latitude: float, src_longitude: float,
         shortest_path_cities = nx.shortest_path(
             G, source=src_city_info, target=dst_city_info, weight='distance')
 
+        if len(shortest_path_cities) < 2:
+            raise HTTPException(status_code=500, detail="Shortest path is invalid")
+
         shortest_distance, coordinate_list, wkt_list, cable_type_list = calculate_shortest_path_distance(
             G, shortest_path_cities)
 
-        return (coordinate_list, wkt_list, cable_type_list)
+        return {
+            'routers_latlon': coordinate_list,
+            'distance_km': shortest_distance,
+            'fiber_wkt_paths': wkt_list,
+            'fiber_types': cable_type_list,
+        }
     except nx.NetworkXNoPath:
         print("cannot find the shortest path")
         return ([], [], [])  # or handle the error as you prefer
@@ -178,7 +193,7 @@ def run():
 def calculate_shortest_path_distance(G, shortest_path_cities):
     total_distance = 0
     coordinate_list = []
-    wkt_list = []
+    wkt_list: list[LineString] = []
     cable_type_list = []
 
     for i in range(len(shortest_path_cities) - 1):
@@ -194,7 +209,7 @@ def calculate_shortest_path_distance(G, shortest_path_cities):
     # Append the coordinates of the last city after the loop
     coordinate_list.append(G.nodes[shortest_path_cities[-1]]['coord'])
 
-    return total_distance, coordinate_list, wkt_list, cable_type_list
+    return total_distance, coordinate_list, MultiLineString(wkt_list).wkt, cable_type_list
 
 
 def city_formatter(city_info):
