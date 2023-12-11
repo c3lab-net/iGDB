@@ -1,5 +1,5 @@
 import sqlite3
-import math
+import sys
 from haversine import haversine
 from ConvertToStandardPath_SubmarineCable import coord_list_to_linestring
 
@@ -98,6 +98,7 @@ if __name__ == "__main__":
         best_city = None
         best_state = None
         best_country = None
+        best_coord = None
         for phys_nodes_lati, phys_nodes_longti, phys_nodes_city, phys_nodes_state, phys_nodes_country in phys_nodes_coords:
             phys_nodes_coord = (phys_nodes_lati, phys_nodes_longti)
             if not isinstance(phys_nodes_coord[0], float):
@@ -108,13 +109,14 @@ if __name__ == "__main__":
                 min_distance = currdistance
                 best_state = phys_nodes_state
                 best_country = phys_nodes_country
+                best_coord = phys_nodes_coord
+
         if (min_distance > 160):
             print(
-                f"warning for city {landing_point_city}, {landing_point_country} and {best_city}, {best_country} with distance {min_distance}")
+                f"warning for city {landing_point_city}, {landing_point_country} and {best_city}, {best_country} with distance {min_distance}", file=sys.stderr)
         else:
             city_mapping[(landing_point_city, landing_point_state, landing_point_country)] = (
-                best_city, best_state, best_country, min_distance, landing_point_coord, phys_nodes_coord)
-
+                best_city, best_state, best_country, min_distance, landing_point_coord, best_coord)
     insert_submarine_city_mapping_to_standard_path_city_database(
         db_file, city_mapping)
     get_all_submarine_to_standard_paths_pairs(db_file)
