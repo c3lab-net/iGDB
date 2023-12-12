@@ -1,5 +1,6 @@
 import argparse
 import csv
+import sys
 import Querying_Database as qdb
 import geopandas as gpd
 
@@ -37,13 +38,13 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 def cut(line, distance, add_p):
     # Cuts a line in two at a distance from its starting point
     # This is taken from shapely manual
-    if distance <= 0:
-        return [LineString(), LineString(line)]
-    elif distance >= line.length:
-        return [LineString(line), LineString()]
-#    if distance <= 0.0 or distance >= line.length:
-#        print(distance, line, line.length, add_p)
-#        return [LineString(line)]
+    # if distance <= 0:
+    #     return [LineString(), LineString(line)]
+    # elif distance >= line.length:
+    #     return [LineString(line), LineString()]
+    if distance <= 0.0 or distance >= line.length:
+        print(distance, line, line.length, add_p, file=sys.stderr)
+        return [LineString(line)]
     coords = list(line.coords)
     for i, p in enumerate(coords):
         pd = line.project(Point(p))
@@ -104,7 +105,10 @@ def add_cloud_regions_to_standard_paths(db_path: str,
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
             distance: float = linestring.project(Point(lon, lat))
-            l1, l2 = cut(linestring, distance, Point(lon, lat))
+            splitted = cut(linestring, distance, Point(lon, lat))
+            if len(splitted) < 2:
+                continue
+            (l1, l2) = splitted
             lines.append(l1)
             lines.append(l2)
             new_rows.append((row[0], row[1], row[2], region, "", "", distance_of_linestring(l1), wkt.dumps(l1), ""))
