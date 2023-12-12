@@ -70,10 +70,12 @@ def distance_of_linestring(ls: LineString) -> float:
 
     return distance
 
-def add_cloud_regions_to_db(db_path: str, rows) -> None:
+def add_cloud_regions_to_db(db_path: str, standard_paths: list, city_points: list) -> None:
     querier = qdb.queryDatabase(db_path)
-    query = f"""INSERT INTO standard_paths VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);"""
-    querier.execute_many(query, rows)
+    query_insert_standard_path = f"""INSERT INTO standard_paths VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    querier.execute_many(query_insert_standard_path, standard_paths)
+    query_insert_city_points = "INSERT INTO city_points VALUES(?, ?, ?, ?, ?);"
+    querier.execute_many(query_insert_city_points, city_points)
 
 def parse_cloud_region_coordinates(cloud_region_coordinates_csv: str) -> dict[str, tuple[float, float]]:
     """Read the csv file containing cloud region coordinates and return a mapping from 'cloud:region' to (lat, lon) tuples."""
@@ -115,7 +117,8 @@ def add_cloud_regions_to_standard_paths(db_path: str,
             new_rows.append((region, "", "", row[3], row[4], row[5], distance_of_linestring(l2), wkt.dumps(l2), ""))
             print(f"{row[0]} to {row[3]}")
 
-    add_cloud_regions_to_db(db_path, new_rows)
+    new_city_points = [(region, "", "", lat, lon) for region, (lat, lon) in region_to_coords.items()]
+    add_cloud_regions_to_db(db_path, new_rows, new_city_points)
 
 #    TODO add this back in once with a cmd line option
 #    kml_string = linestrings_to_kml([""]*len(lines), lines)
