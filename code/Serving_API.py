@@ -82,7 +82,7 @@ def parse_wkt_linestring(wkt_string) -> LineString:
         return None
 
 
-def graph_build_helper(G, coordCityMap, coord_set, path_set, option):
+def graph_build_helper(G, coord_city_map, coord_set, path_set, submarine_option = False):
     for from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt in path_set:
 
         from_city_info = city_formatter((from_city, from_state, from_country))
@@ -97,24 +97,20 @@ def graph_build_helper(G, coordCityMap, coord_set, path_set, option):
         end_city_coord = linestring.coords[-1]
         start_city_coord = coordinate_reverser(start_city_coord)
         end_city_coord = coordinate_reverser(end_city_coord)
-        coordCityMap[start_city_coord] = from_city_info
+        coord_city_map[start_city_coord] = from_city_info
 
         coord_set.append(start_city_coord)
-        coordCityMap[end_city_coord] = to_city_info
+        coord_city_map[end_city_coord] = to_city_info
         coord_set.append(end_city_coord)
 
-        edge_type = None
+        edge_type = 'land'
 
-        if option == 'submarine_standard_paths':
+        if submarine_option:
             edge_type = "submarine"
-        else:
-            edge_type = 'land'
 
-        add_edge(G, from_city_info,
-                    to_city_info, distance_km, linestring, start_city_coord, end_city_coord, edge_type)
-        add_edge(G, to_city_info,
-                    from_city_info, distance_km, LineString(linestring.coords[::-1]), end_city_coord, start_city_coord, edge_type)
-    return G, coordCityMap, coord_set
+        add_edge(G, from_city_info, to_city_info, distance_km, linestring, start_city_coord, end_city_coord, edge_type)
+        add_edge(G, to_city_info, from_city_info, distance_km, LineString(linestring.coords[::-1]), end_city_coord, start_city_coord, edge_type)
+    return G, coord_city_map, coord_set
 
 
 def build_up_global_graph(db_file):
@@ -124,17 +120,17 @@ def build_up_global_graph(db_file):
         db_file)
     standard_paths = get_all_standard_paths(db_file)
     G = nx.DiGraph()
-    coordCityMap = {}
+    coord_city_map = {}
     coord_set = []
 
-    G, coordCityMap, coord_set = graph_build_helper(
-        G, coordCityMap, coord_set, standard_paths, 'standard_paths')
-    G, coordCityMap, coord_set = graph_build_helper(
-        G, coordCityMap, coord_set, submarine_standard_paths, 'submarine_standard_paths')
-    G, coordCityMap, coord_set = graph_build_helper(
-        G, coordCityMap, coord_set, submarine_to_standard_paths_pairs, 'submarine_to_standard_paths_pairs')
+    G, coord_city_map, coord_set = graph_build_helper(
+        G, coord_city_map, coord_set, standard_paths)
+    G, coord_city_map, coord_set = graph_build_helper(
+        G, coord_city_map, coord_set, submarine_standard_paths, True)
+    G, coord_city_map, coord_set = graph_build_helper(
+        G, coord_city_map, coord_set, submarine_to_standard_paths_pairs)
 
-    return coordCityMap, coord_set, G
+    return coord_city_map, coord_set, G
 
 
 app = FastAPI()
@@ -147,8 +143,8 @@ def physical_route(src_latitude: float, src_longitude: float,
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
     # Convert input coordinates to city information
-    src_city_co = find_closest_point((src_latitude, src_longitude), coord_set)
-    dst_city_co = find_closest_point((dst_latitude, dst_longitude), coord_set)
+    src_city_co = find_closest_point((src_latitude, src_longitude), app.coord_set)
+    dst_city_co = find_closest_point((dst_latitude, dst_longitude), app.coord_set)
 
     if src_city_co == dst_city_co:
         return {
@@ -158,21 +154,18 @@ def physical_route(src_latitude: float, src_longitude: float,
             'fiber_types': ['land'],
         }
 
-    src_city_info = coordCityMap[src_city_co]
-    dst_city_info = coordCityMap[dst_city_co]
+    src_city_info = app.coord_city_map[src_city_co]
+    dst_city_info = app.coord_city_map[dst_city_co]
 
     assert src_city_info and dst_city_info
 
     # Find shortest path between cities in the graph
     try:
         shortest_path_cities = nx.shortest_path(
-            G, source=src_city_info, target=dst_city_info, weight='distance')
-
-        if len(shortest_path_cities) < 2:
-            raise HTTPException(status_code=500, detail="Shortest path is invalid")
+            app.G, source=src_city_info, target=dst_city_info, weight='distance')
 
         shortest_distance, coordinate_list, wkt_list, cable_type_list = calculate_shortest_path_distance(
-            G, shortest_path_cities)
+            app.G, shortest_path_cities)
 
         return {
             'routers_latlon': coordinate_list,
@@ -181,11 +174,12 @@ def physical_route(src_latitude: float, src_longitude: float,
             'fiber_types': cable_type_list,
         }
     except nx.NetworkXNoPath:
-        print("cannot find the shortest path")
-        return ([], [], [])  # or handle the error as you prefer
+        raise HTTPException(status_code=400, detail="Shortest path is invalid")
 
 
 def run():
+    app.db_file = '../database/igdb.db'
+    app.coord_city_map, app.coord_set, app.G = build_up_global_graph(app.db_file)
     import uvicorn
     uvicorn.run(app, port=8082)
 
@@ -226,48 +220,5 @@ def parse_csv(filename):
     return data
 
 
-def function_tester():
-    filename = 'all_pairs.by_geo.csv'
-    parsed_data = parse_csv(filename)
-    for item in parsed_data:
-        src_city_co = (float(item['src_latitude']),
-                       float(item['src_longitude']))
-        dst_city_co = (float(item['dst_latitude']),
-                       float(item['dst_longitude']))
-
-        print(src_city_co)
-        print(dst_city_co)
-
-        src_city_co = find_closest_point(
-            src_city_co, coord_set)
-
-        dst_city_co = find_closest_point(
-            dst_city_co, coord_set)
-
-        src_city_info = coordCityMap[src_city_co]
-
-        dst_city_info = coordCityMap[dst_city_co]
-
-        shortest_path_cities = nx.shortest_path(
-            G, source=src_city_info, target=dst_city_info, weight='distance')
-
-        shortest_distance, coordinate_list, wkt_list, cable_type_list = calculate_shortest_path_distance(
-            G, shortest_path_cities)
-
-        print(src_city_co)
-        print(dst_city_co)
-
-        print(src_city_info)
-        print(dst_city_info)
-
-        print(wkt_list)
-        print(cable_type_list)
-        print(coordinate_list)
-        print("\n")
-
-
 if __name__ == "__main__":
-    db_file = '../database/igdb.db'
-    coordCityMap, coord_set, G = build_up_global_graph(db_file)
     run()
-    # function_tester()
