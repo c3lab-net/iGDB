@@ -197,6 +197,7 @@ def get_data_from_database(db_file):
 
 
     """
+    print("\tGetting submarine cable data from database...")
     global whole_data
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
@@ -266,6 +267,7 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
 
 
     """
+    print("\tCalculating distance between cable landing points...")
     submarine_standard_paths = []
     for cable_id, cities_info in cable_id_to_cities.items():
         # Build up the graph for cable
@@ -309,6 +311,7 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
 
 
 def insert_submarine_standard_paths_to_database(db_file, submarine_standard_paths):
+    print("\tInserting submarine standard paths to database...")
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
 
@@ -353,11 +356,17 @@ def get_all_submarine_standard_paths(db_file):
     return datas
 
 
-if __name__ == "__main__":
-    db_file = '../database/igdb.db'
+def add_submarine_cable_like_standard_path(db_file: str):
+    """Add submarine cable in standard path format to a new table."""
+    print("Adding submarine cable like standard path to database...")
     cable_id_to_cities, cable_id_to_wkt = get_data_from_database(db_file)
     submarine_standard_paths = calculate_distance_between_cable_landing_points(
         cable_id_to_cities, cable_id_to_wkt)
     insert_submarine_standard_paths_to_database(
         db_file, submarine_standard_paths)
+    print("Done.")
+
+if __name__ == "__main__":
+    db_file = '../database/igdb.db'
+    add_submarine_cable_like_standard_path(db_file)
     get_all_submarine_standard_paths(db_file)

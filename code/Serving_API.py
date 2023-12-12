@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from fastapi import FastAPI, HTTPException
-from ConvertToStandardPath_MargeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
+from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths, floatFormatter
 import sqlite3
 import networkx as nx

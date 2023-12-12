@@ -5,6 +5,7 @@ from ConvertToStandardPath_SubmarineCable import coord_list_to_linestring
 
 
 def get_landing_point_coord_from_database(db_file):
+    print("\tGetting landing point coordinates from database...")
     landing_point_coord = []
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
@@ -19,6 +20,7 @@ def get_landing_point_coord_from_database(db_file):
 
 
 def get_phys_nodes_coord_from_database(db_file):
+    print("\tGetting physical nodes coordinates from database...")
     phys_nodes_coord = []
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
@@ -37,6 +39,7 @@ def get_phys_nodes_coord_from_database(db_file):
 
 
 def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping):
+    print("\tAdding new mapping to database...")
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
 
@@ -86,11 +89,8 @@ def get_all_submarine_to_standard_paths_pairs(db_file):
 
     return datas
 
-
-if __name__ == "__main__":
-    db_file = '../database/igdb.db'
-    landing_point_coords = get_landing_point_coord_from_database(db_file)
-    phys_nodes_coords = get_phys_nodes_coord_from_database(db_file)
+def map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords):
+    print("\tMapping landing point cities to closest physical node...")
     city_mapping = {}
     for landing_point_lati, landing_point_longti, landing_point_city, landing_point_state, landing_point_country in landing_point_coords:
         landing_point_coord = (landing_point_lati, landing_point_longti)
@@ -117,6 +117,19 @@ if __name__ == "__main__":
         else:
             city_mapping[(landing_point_city, landing_point_state, landing_point_country)] = (
                 best_city, best_state, best_country, min_distance, landing_point_coord, best_coord)
-    insert_submarine_city_mapping_to_standard_path_city_database(
-        db_file, city_mapping)
+    return city_mapping
+
+
+def connect_submarine_cable_to_standard_path(db_file: str):
+    """Create a new table that connect the submarine cable cities to the closest standard path city."""
+    print("Connecting submarine cable to standard path...")
+    landing_point_coords = get_landing_point_coord_from_database(db_file)
+    phys_nodes_coords = get_phys_nodes_coord_from_database(db_file)
+    city_mapping = map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords)
+    insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping)
+    print("Done.")
+
+if __name__ == "__main__":
+    db_file = '../database/igdb.db'
+    connect_submarine_cable_to_standard_path(db_file)
     get_all_submarine_to_standard_paths_pairs(db_file)
