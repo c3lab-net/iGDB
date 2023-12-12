@@ -87,8 +87,8 @@ def get_all_submarine_to_standard_paths_pairs(db_file):
     return datas
 
 
-if __name__ == "__main__":
-    db_file = '../database/igdb.db'
+def connect_submarine_cable_to_standard_path(db_file: str):
+    """Create a new table that connect the submarine cable cities to the closest standard path city."""
     landing_point_coords = get_landing_point_coord_from_database(db_file)
     phys_nodes_coords = get_phys_nodes_coord_from_database(db_file)
     city_mapping = {}
@@ -119,4 +119,8 @@ if __name__ == "__main__":
                 best_city, best_state, best_country, min_distance, landing_point_coord, best_coord)
     insert_submarine_city_mapping_to_standard_path_city_database(
         db_file, city_mapping)
+
+if __name__ == "__main__":
+    db_file = '../database/igdb.db'
+    connect_submarine_cable_to_standard_path(db_file)
     get_all_submarine_to_standard_paths_pairs(db_file)

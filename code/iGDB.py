@@ -2,6 +2,8 @@ import sys
 import os
 from pathlib import Path
 import dbStructure
+import ConvertToStandardPath_SubmarineCable
+import ConvertToStandardPath_MergeSubmarineWithLandCable
 import Crawling_ASRank
 import Crawling_EuroIX
 import Crawling_HE
@@ -209,6 +211,10 @@ class iGDB:
     def create_db_func(self):
         db_creator = Creating_Database.CreatingDatabase(self.processed_path,
                 self.database_path, self.create_db_name)
+        ConvertToStandardPath_SubmarineCable.add_submarine_cable_like_standard_path(
+            self.database_path / self.create_db_name)
+        ConvertToStandardPath_MergeSubmarineWithLandCable.connect_submarine_cable_to_standard_path(
+            self.database_path / self.create_db_name)
 
     def update_db_func(self):
         if not os.path.isdir(self.unprocessed_path):

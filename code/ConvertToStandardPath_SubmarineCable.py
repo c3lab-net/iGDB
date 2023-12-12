@@ -353,11 +353,15 @@ def get_all_submarine_standard_paths(db_file):
     return datas
 
 
-if __name__ == "__main__":
-    db_file = '../database/igdb.db'
+def add_submarine_cable_like_standard_path(db_file: str):
+    """Add submarine cable in standard path format to a new table."""
     cable_id_to_cities, cable_id_to_wkt = get_data_from_database(db_file)
     submarine_standard_paths = calculate_distance_between_cable_landing_points(
         cable_id_to_cities, cable_id_to_wkt)
     insert_submarine_standard_paths_to_database(
         db_file, submarine_standard_paths)
+
+if __name__ == "__main__":
+    db_file = '../database/igdb.db'
+    add_submarine_cable_like_standard_path(db_file)
     get_all_submarine_standard_paths(db_file)
