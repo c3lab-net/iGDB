@@ -125,7 +125,7 @@ def parse_args():
     parser.add_argument("-p", "--database-path", type=str, default="../database/igdb.db",
                         help='Path to database file, default is `../database/igdb.db`')
     parser.add_argument("-c", "--cloud-region-coordinates-csv", type=str,
-                        default="../helper_data/cloud_regions/cloud_regions.coordinates.csv",
+                        default="../helper_data/cloud_regions/cloud_region_coordinates.csv",
                         help="""Path to csv file containing cloud region coordinates.
                         The csv file should have four columns: cloud, region, latitude, longitude.""")
     parser.add_argument("-d", "--max-distance", type=float, default=5,
