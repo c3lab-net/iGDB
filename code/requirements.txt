@@ -11,4 +11,5 @@ rtree
 selenium
 shapely
 fastapi
+httpx
 uvicorn
