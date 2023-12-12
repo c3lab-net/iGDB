@@ -1,8 +1,20 @@
+#!/usr/bin/env python3
+
+import csv
+
 from fastapi.testclient import TestClient
 # Assuming initialize_graph is a function that sets up your graph
-from Serving_API import app, build_up_global_graph, parse_csv
+from Serving_API import app, build_up_global_graph
 
 client = TestClient(app)
+
+def parse_csv(filename):
+    data = []
+    with open(filename, newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            data.append(row)
+    return data
 
 
 def setup_test_environment():

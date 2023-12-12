@@ -5,23 +5,24 @@ from ConvertToStandardPath_MargeSubmarineWithLandCable import get_all_submarine_
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths, floatFormatter
 import sqlite3
 import networkx as nx
-import csv
-from xml.dom.minidom import Document
 from haversine import haversine
 
 from shapely import wkt
 from shapely.geometry import LineString, MultiLineString
 
-# find the closest point for a given coordinate in case it is not in the graph
+
+def city_formatter(city_info):
+    city, state, country = city_info
+    return (city.strip(), state.strip(), country.strip())
 
 
 def find_closest_point(point, points_set):
+    """find the closest point for a given coordinate in case it is not in the graph"""
     return min(points_set, key=lambda p: haversine(point, p))
-
-# helper function to build nx graph with src/dst city, src/dst coordinates, wkt path, cabel type and distance.
 
 
 def add_edge(G, city1, city2, distance, path_wkt, src_city_coord, dst_city_coord, cable_type):
+    """helper function to build nx graph with src/dst city, src/dst coordinates, wkt path, cabel type and distance."""
     # Add or update nodes with their coordinates
     G.add_node(city1, coord=src_city_coord)
     G.add_node(city2, coord=dst_city_coord)
@@ -30,10 +31,9 @@ def add_edge(G, city1, city2, distance, path_wkt, src_city_coord, dst_city_coord
     G.add_edge(city1, city2, weight=distance, path_wkt=path_wkt,
                src_city_coord=src_city_coord, dst_city_coord=dst_city_coord, cable_type=cable_type)
 
-# read standard paths from database
-
 
 def get_all_standard_paths(db_file):
+    """read standard paths from database"""
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """
@@ -45,40 +45,19 @@ def get_all_standard_paths(db_file):
     conn.close()
     return datas
 
-# lati and longti in wkt path is reversed, use this helper function to reverse that
-
 
 def coordinate_reverser(coord):
+    """lati and longti in wkt path is reversed, use this helper function to reverse that"""
     coord_longti, coord_lati = coord
     return (coord_lati, coord_longti)
 
-# reverse linestring coords order for direct graph
-
-
-def reverse_linestring_order(linestring):
-    # Remove the 'LINESTRING(' prefix and the closing ')'
-    clean_string = linestring.replace("LINESTRING(", "").replace(")", "")
-
-    # Split the string into coordinate pairs
-    coords = clean_string.split(", ")
-
-    # Reverse the order of the coordinate pairs
-    reversed_coords = coords[::-1]
-
-    # Join the reversed coordinates back into a LineString
-    reversed_linestring = "LINESTRING(" + ", ".join(reversed_coords) + ")"
-
-    return reversed_linestring
-
-# helper function to get the src/dst coordinate from a wkt path
-
 
 def parse_wkt_linestring(wkt_string) -> LineString:
-    # Remove the LINESTRING prefix and split the string into coordinate pairs
+    """helper function to get the src/dst coordinate from a wkt path"""
     try:
         return wkt.loads(wkt_string)
-    except Exception as e:
-        print(f"wkt string {wkt_string} is not valid")
+    except Exception as ex:
+        print(f"wkt string {wkt_string} is not valid: {ex}")
         return None
 
 
@@ -133,6 +112,28 @@ def build_up_global_graph(db_file):
     return coord_city_map, coord_set, G
 
 
+def calculate_shortest_path_distance(G, shortest_path_cities):
+    total_distance = 0
+    coordinate_list = []
+    wkt_list: list[LineString] = []
+    cable_type_list = []
+
+    for i in range(len(shortest_path_cities) - 1):
+        city1 = shortest_path_cities[i]
+        city2 = shortest_path_cities[i + 1]
+
+        total_distance += G[city1][city2]['weight']
+        # Only append the coordinates of the source city here
+        coordinate_list.append(G.nodes[city1]['coord'])
+        wkt_list.append(G[city1][city2]['path_wkt'])
+        cable_type_list.append(G[city1][city2]['cable_type'])
+
+    # Append the coordinates of the last city after the loop
+    coordinate_list.append(G.nodes[shortest_path_cities[-1]]['coord'])
+
+    return total_distance, coordinate_list, MultiLineString(wkt_list).wkt, cable_type_list
+
+
 app = FastAPI()
 
 
@@ -182,42 +183,6 @@ def run():
     app.coord_city_map, app.coord_set, app.G = build_up_global_graph(app.db_file)
     import uvicorn
     uvicorn.run(app, port=8082)
-
-
-def calculate_shortest_path_distance(G, shortest_path_cities):
-    total_distance = 0
-    coordinate_list = []
-    wkt_list: list[LineString] = []
-    cable_type_list = []
-
-    for i in range(len(shortest_path_cities) - 1):
-        city1 = shortest_path_cities[i]
-        city2 = shortest_path_cities[i + 1]
-
-        total_distance += G[city1][city2]['weight']
-        # Only append the coordinates of the source city here
-        coordinate_list.append(G.nodes[city1]['coord'])
-        wkt_list.append(G[city1][city2]['path_wkt'])
-        cable_type_list.append(G[city1][city2]['cable_type'])
-
-    # Append the coordinates of the last city after the loop
-    coordinate_list.append(G.nodes[shortest_path_cities[-1]]['coord'])
-
-    return total_distance, coordinate_list, MultiLineString(wkt_list).wkt, cable_type_list
-
-
-def city_formatter(city_info):
-    city, state, country = city_info
-    return (city.strip(), state.strip(), country.strip())
-
-
-def parse_csv(filename):
-    data = []
-    with open(filename, newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            data.append(row)
-    return data
 
 
 if __name__ == "__main__":
