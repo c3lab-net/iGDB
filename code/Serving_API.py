@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths, floatFormatter
@@ -19,9 +20,9 @@ def city_formatter(city_info: Location) -> Location:
     return (city.strip(), state.strip(), country.strip())
 
 
-def find_closest_point(point: Coordinate, points_set: set[Coordinate]) -> Coordinate:
+def find_closest_points(point: Coordinate, points_set: set[Coordinate], max_distance_km=150) -> list[Coordinate]:
     """find the closest point for a given coordinate in case it is not in the graph"""
-    return min(points_set, key=lambda p: haversine(point, p))
+    return list(filter(lambda p: haversine(point, p) < max_distance_km, points_set))
 
 
 def add_edge(G, city1: Location, city2: Location, distance: float, path_wkt: str,
@@ -54,6 +55,10 @@ def coordinate_reverser(coord: Coordinate) -> Coordinate:
     coord_longti, coord_lati = coord
     return (coord_lati, coord_longti)
 
+
+def create_linestring_from_latlon_list(latlon_list: list[Coordinate]) -> LineString:
+    """helper function to create a linestring from a list of latlon"""
+    return LineString([coordinate_reverser(coord) for coord in latlon_list])
 
 def parse_wkt_linestring(wkt_string: str) -> LineString:
     """helper function to get the src/dst coordinate from a wkt path"""
@@ -98,6 +103,7 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
 
 
 def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coordinate], nx.Graph]:
+    print("Building up NX graph from paths...")
     submarine_standard_paths = get_all_submarine_standard_paths(db_file)
     submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(db_file)
     standard_paths = get_all_standard_paths(db_file)
@@ -139,7 +145,29 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
     return total_distance, coordinate_list, MultiLineString(wkt_list).wkt, cable_type_list
 
 
+def connect_nearby_cities(G, name: str, coordinate: Coordinate, nearby_cities: list[Coordinate],
+                           coord_city_map: dict[Coordinate, Location]) -> None:
+    """helper function to connect the closest cities to the graph"""
+    nearby_city: Coordinate
+    if coordinate in coord_city_map:
+        node_name = coord_city_map[coordinate]
+    else:
+        node_name = Location((name, "", ""))
+        G.add_node(node_name, coord=coordinate)
+        coord_city_map[coordinate] = node_name
+
+    for nearby_city in nearby_cities:
+        nearby_city_name = coord_city_map[nearby_city]
+        distance_km = haversine(coordinate, nearby_city)
+        add_edge(G, node_name, nearby_city_name, distance_km,
+                 create_linestring_from_latlon_list([coordinate, nearby_city]), coordinate, nearby_city, 'land')
+        add_edge(G, nearby_city_name, node_name, distance_km,
+                 create_linestring_from_latlon_list([nearby_city, coordinate]), nearby_city, coordinate, 'land')
+
+
 app = FastAPI()
+
+SAME_CITY_THRESHOLD_KM = 5
 
 
 @app.get("/physical-route/")
@@ -148,30 +176,39 @@ def physical_route(src_latitude: float, src_longitude: float,
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
-    # Convert input coordinates to city information
-    src_city_co = find_closest_point((src_latitude, src_longitude), app.coord_set)
-    dst_city_co = find_closest_point((dst_latitude, dst_longitude), app.coord_set)
-
-    if src_city_co == dst_city_co:
+    src_coordinate = (src_latitude, src_longitude)
+    dst_coordinate = (dst_latitude, dst_longitude)
+    direct_distance_km = haversine(src_coordinate, dst_coordinate)
+    if direct_distance_km < SAME_CITY_THRESHOLD_KM:
+        linestring = create_linestring_from_latlon_list([src_coordinate, dst_coordinate])
         return {
-            'routers_latlon': [src_city_co, dst_city_co],
-            'distance_km': 0,
-            'fiber_wkt_paths': MultiLineString([LineString([src_city_co, dst_city_co])]).wkt,
+            'routers_latlon': [src_coordinate, dst_coordinate],
+            'distance_km': direct_distance_km,
+            'fiber_wkt_paths': MultiLineString([linestring]).wkt,
             'fiber_types': ['land'],
         }
 
-    src_city_info = app.coord_city_map[src_city_co]
-    dst_city_info = app.coord_city_map[dst_city_co]
+    # Convert input coordinates to city information
+    src_nearby_cities: list[Coordinate] = find_closest_points((src_latitude, src_longitude), app.coord_set)
+    dst_nearby_cities: list[Coordinate] = find_closest_points((dst_latitude, dst_longitude), app.coord_set)
 
-    assert src_city_info and dst_city_info
+    G: nx.Graph = app.G.copy()
+    coord_city_map: dict[Coordinate, Location] = app.coord_city_map.copy()
+    connect_nearby_cities(G, "src", src_coordinate, src_nearby_cities, coord_city_map)
+    connect_nearby_cities(G, "dst", dst_coordinate, dst_nearby_cities, coord_city_map)
+
+    src_city = coord_city_map[src_coordinate]
+    dst_city = coord_city_map[dst_coordinate]
+
+    assert src_city and dst_city
 
     # Find shortest path between cities in the graph
     try:
         shortest_path_cities: list[Location] = nx.shortest_path(
-            app.G, source=src_city_info, target=dst_city_info, weight='distance')
+            G, source=src_city, target=dst_city, weight='distance')
 
         shortest_distance, coordinate_list, wkt_list, cable_type_list = calculate_shortest_path_distance(
-            app.G, shortest_path_cities)
+            G, shortest_path_cities)
 
         return {
             'routers_latlon': coordinate_list,
@@ -180,7 +217,7 @@ def physical_route(src_latitude: float, src_longitude: float,
             'fiber_types': cable_type_list,
         }
     except nx.NetworkXNoPath:
-        raise HTTPException(status_code=400, detail="Shortest path is invalid")
+        raise HTTPException(status_code=400, detail="No shortest path found")
 
 
 def run():
