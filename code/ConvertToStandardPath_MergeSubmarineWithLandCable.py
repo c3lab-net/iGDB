@@ -10,7 +10,10 @@ def get_landing_point_coord_from_database(db_file):
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     cursor.execute(
-        'SELECT lp.latitude, lp.longitude, lp.city_name, lp.state_province, lp.country FROM landing_points lp;')
+        """SELECT lp.latitude, lp.longitude, clp.city_name, clp.state_province, clp.country
+            FROM cable_landing_points clp, landing_points lp
+            WHERE clp.city_name = lp.city_name 
+                AND (' ' || clp.country) = lp.country;""")
     datas = cursor.fetchall()
     for data in datas:
         landing_point_coord.append(data)
@@ -101,13 +104,15 @@ def map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords)
                 continue
             distance_km = haversine(landing_point_coord, phys_nodes_coord)
             if distance_km > DISTANCE_THRESHOLD_KM:
-                print(
-                    f"warning for city {landing_point_city}, {landing_point_country} and {phys_nodes_city}, {phys_nodes_country} with distance {distance_km}", file=sys.stderr)
+                # print(
+                    # f"warning for city {landing_point_city}, {landing_point_country} and {phys_nodes_city}, {phys_nodes_country} with distance {distance_km}", file=sys.stderr)
                 continue
 
             landing_point = (landing_point_city, landing_point_state, landing_point_country, landing_point_coord)
             physical_node = (phys_nodes_city, phys_nodes_state, phys_nodes_country, phys_nodes_coord, distance_km)
-            city_mapping.get(landing_point, []).append(physical_node)
+            if landing_point not in city_mapping:
+                city_mapping[landing_point] = []
+            city_mapping[landing_point].append(physical_node)
     return city_mapping
 
 
