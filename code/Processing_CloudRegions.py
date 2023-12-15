@@ -1,4 +1,6 @@
 import argparse
+import csv
+import sys
 import Querying_Database as qdb
 import geopandas as gpd
 
@@ -36,7 +38,12 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 def cut(line, distance, add_p):
     # Cuts a line in two at a distance from its starting point
     # This is taken from shapely manual
+    # if distance <= 0:
+    #     return [LineString(), LineString(line)]
+    # elif distance >= line.length:
+    #     return [LineString(line), LineString()]
     if distance <= 0.0 or distance >= line.length:
+        print(distance, line, line.length, add_p, file=sys.stderr)
         return [LineString(line)]
     coords = list(line.coords)
     for i, p in enumerate(coords):
@@ -63,52 +70,78 @@ def distance_of_linestring(ls: LineString) -> float:
 
     return distance
 
-def add_cloud_regions_to_db(db_path: str, rows) -> None:
+def add_cloud_regions_to_db(db_path: str, standard_paths: list, city_points: list) -> None:
     querier = qdb.queryDatabase(db_path)
-    query = f"""INSERT INTO standard_paths VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);"""
-    querier.execute_many(query, rows)
+    query_insert_standard_path = f"""INSERT INTO standard_paths VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?);"""
+    querier.execute_many(query_insert_standard_path, standard_paths)
+    query_insert_city_points = "INSERT INTO city_points VALUES(?, ?, ?, ?, ?);"
+    querier.execute_many(query_insert_city_points, city_points)
 
+def parse_cloud_region_coordinates(cloud_region_coordinates_csv: str) -> dict[str, tuple[float, float]]:
+    """Read the csv file containing cloud region coordinates and return a mapping from 'cloud:region' to (lat, lon) tuples."""
+    region_to_coords = {}
+    with open(cloud_region_coordinates_csv, "r") as csv_file:
+        csv_reader = csv.DictReader(csv_file, delimiter=",")
+        for row in csv_reader:
+            cloud_region = f"{row['cloud']}:{row['region']}"
+            latitude = float(row['latitude'])
+            longitude = float(row['longitude'])
+            region_to_coords[cloud_region] = (latitude, longitude)
 
-if __name__ == "__main__":
-    
-    parser = argparse.ArgumentParser()
-    parser.add_argument("-p", "--database-path", type=str, default="../database/igdb.db",
-                        help='Path to database file, default is `../database/igdb.db`')
-    parser.add_argument("-d", "--max-distance", type=float, default=5,
-                        help="""Maximum distance, in km, to consider a region to
-                        lie along an edge. If the location of the cloud region
-                        is less than this distance away from an existing edge,
-                        we consider the region to be connected to the edge.""")
+    return region_to_coords
 
+def add_cloud_regions_to_standard_paths(db_path: str,
+                                        cloud_region_coordinates_csv: str,
+                                        max_distance_km: float = 5) -> None:
+    """Add cloud regions to the standard paths table."""
+    print('Adding cloud regions to standard paths table...')
+    region_to_coords = parse_cloud_region_coordinates(cloud_region_coordinates_csv)
 
-    args = parser.parse_args()
-
-    # TODO get these from a file, etc
-    region_to_coords = {
-                        "aws:us-west-1": (37.2379, -121.7946),
-                        "aws:us-east-1": (39.0127, -77.5342),
-                       }
-    print(args)
+    new_rows = []
     lines = []
     for region, (lat, lon) in region_to_coords.items():
-
-        rows = find_closest_paths(lat, lon, args.database_path, args.max_distance)
+        print(f"Adding {region} ({lat}, {lon}) to standard paths table...")
+        rows = find_closest_paths(lat, lon, db_path, max_distance_km)
         print(f"Found {len(rows)} rows")
 
-        new_rows = []
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
             distance: float = linestring.project(Point(lon, lat))
-            l1, l2 = cut(linestring, distance, Point(lon, lat))
+            splitted = cut(linestring, distance, Point(lon, lat))
+            if len(splitted) < 2:
+                continue
+            (l1, l2) = splitted
             lines.append(l1)
             lines.append(l2)
             new_rows.append((row[0], row[1], row[2], region, "", "", distance_of_linestring(l1), wkt.dumps(l1), ""))
             new_rows.append((region, "", "", row[3], row[4], row[5], distance_of_linestring(l2), wkt.dumps(l2), ""))
             print(f"{row[0]} to {row[3]}")
 
-        add_cloud_regions_to_db(args.database_path, new_rows)
+    new_city_points = [(region, "", "", lat, lon) for region, (lat, lon) in region_to_coords.items()]
+    add_cloud_regions_to_db(db_path, new_rows, new_city_points)
 
 #    TODO add this back in once with a cmd line option
 #    kml_string = linestrings_to_kml([""]*len(lines), lines)
 #    with open("split_linestrings.kml", "wb") as kml_file:
 #        kml_file.write(kml_string)
+
+    print('Finished adding cloud regions to standard paths table.')
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-p", "--database-path", type=str, default="../database/igdb.db",
+                        help='Path to database file, default is `../database/igdb.db`')
+    parser.add_argument("-c", "--cloud-region-coordinates-csv", type=str,
+                        default="../helper_data/cloud_regions/cloud_region_coordinates.csv",
+                        help="""Path to csv file containing cloud region coordinates.
+                        The csv file should have four columns: cloud, region, latitude, longitude.""")
+    parser.add_argument("-d", "--max-distance", type=float, default=5,
+                        help="""Maximum distance, in km, to consider a region to
+                        lie along an edge. If the location of the cloud region
+                        is less than this distance away from an existing edge,
+                        we consider the region to be connected to the edge.""")
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_args()
+    add_cloud_regions_to_standard_paths(args.database_path, args.cloud_region_coordinates_csv, args.max_distance)
