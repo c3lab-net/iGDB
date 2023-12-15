@@ -20,7 +20,7 @@ def parse_csv(filename):
 def setup_test_environment():
     # Initialize graph and mappings here
     app.db_file = '../database/igdb.db'
-    app.coord_city_map, app.coord_set, app.G = build_up_global_graph(
+    app.coord_city_map, app.coord_set, app.G, app.asn_nodes = build_up_global_graph(
         app.db_file)
 
 

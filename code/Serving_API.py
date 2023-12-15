@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 
-import math
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
-from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths, floatFormatter
+from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths
 import sqlite3
 import networkx as nx
 from haversine import haversine
+import geopandas as gpd
+import sys
 
-from shapely import wkt
+from shapely import wkt, Point
 from shapely.geometry import LineString, MultiLineString
+from Processing_CloudRegions import cut
 
 
 Coordinate=tuple[float, float]
@@ -50,6 +52,23 @@ def get_all_standard_paths(db_file: str):
     return data
 
 
+# fetch all asn nodes related to amazon from database
+def get_all_asn_node(db_file):
+    """read asn node from database"""
+    conn = sqlite3.connect(db_file)
+    cursor = conn.cursor()
+    sql_query = """
+    SELECT DISTINCT al.latitude, al.longitude
+    FROM asn_asname aa
+    JOIN asn_loc al ON aa.asn = al.asn
+    WHERE aa.asn_name LIKE '%amazon%' and al.physical_presence = 'True';
+    """
+    cursor.execute(sql_query)
+    datas = cursor.fetchall()
+    conn.close()
+    return datas
+
+
 def coordinate_reverser(coord: Coordinate) -> Coordinate:
     """lati and longti in wkt path is reversed, use this helper function to reverse that"""
     coord_longti, coord_lati = coord
@@ -65,7 +84,7 @@ def parse_wkt_linestring(wkt_string: str) -> LineString:
     try:
         return wkt.loads(wkt_string)
     except Exception as ex:
-        print(f"wkt string {wkt_string} is not valid: {ex}")
+        print(f"wkt string {wkt_string} is not valid: {ex}", file=sys.stderr)
         return None
 
 
@@ -80,7 +99,7 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
             continue
         linestring = parse_wkt_linestring(path_wkt)
         if linestring is None:
-            print(f"invalid wkt string {path_wkt}")
+            print(f"invalid wkt string {path_wkt}", sys.stderr)
             continue
         start_city_coord = linestring.coords[0]
         end_city_coord = linestring.coords[-1]
@@ -97,8 +116,10 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
         if submarine_option:
             edge_type = "submarine"
 
-        add_edge(G, from_city_info, to_city_info, distance_km, linestring, start_city_coord, end_city_coord, edge_type)
-        add_edge(G, to_city_info, from_city_info, distance_km, LineString(linestring.coords[::-1]), end_city_coord, start_city_coord, edge_type)
+        add_edge(G, from_city_info, to_city_info, distance_km,
+                 linestring, start_city_coord, end_city_coord, edge_type)
+        add_edge(G, to_city_info, from_city_info, distance_km,
+                 LineString(linestring.coords[::-1]), end_city_coord, start_city_coord, edge_type)
     return G, coord_city_map, coordinates
 
 
@@ -107,6 +128,7 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     submarine_standard_paths = get_all_submarine_standard_paths(db_file)
     submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(db_file)
     standard_paths = get_all_standard_paths(db_file)
+    asn_nodes = get_all_asn_node(db_file)
 
     G = nx.DiGraph()
     coord_city_map: dict[Coordinate, Location] = {}
@@ -119,10 +141,27 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, submarine_to_standard_paths_pairs)
 
-    return coord_city_map, coord_set, G
+    return coord_city_map, coord_set, G, asn_nodes
 
 
-def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate]) -> \
+def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float) -> gpd.GeoDataFrame:
+    gs = gpd.GeoSeries(db_path)
+
+    # The GeoDataFrame takes a coordinate system that it applies to the
+    # 'geometry' column. The EPSG:4326 coordinate system is latitude,
+    # longitude.
+    geodf = gpd.GeoDataFrame(geometry=gs, crs="EPSG:4326")
+    geodf["intersection"] = geodf["geometry"].shortest_line(Point(lon, lat))
+    # Before calculating distances we need to change coordinate systems to one
+    # that has a unit of length. The EPSG:3857 coordinate system has units of
+    # meters, and is what Google Maps uses.
+    geodf["distance"] = geodf["intersection"].to_crs("EPSG:3857").length / 1000
+
+    return geodf[geodf["distance"] < max_distance]
+
+
+def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate],
+                                     asn_nodes: list) -> \
         tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
     coordinate_list = []
@@ -135,9 +174,61 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
 
         total_distance += G[city1][city2]['weight']
         # Only append the coordinates of the source city here
-        coordinate_list.append(G.nodes[city1]['coord'])
-        wkt_list.append(G[city1][city2]['path_wkt'])
-        cable_type_list.append(G[city1][city2]['cable_type'])
+        # for each edge, find all the available asn nodes that are close to the edge
+        insertable_asn = []
+        for lat, lon in asn_nodes:
+            if lat != 'NULL' and lon != 'NULL':
+                result = find_closest_paths(
+                    lat, lon, G[city1][city2]['path_wkt'], 5)
+                if not result.empty:
+                    insertable_asn.append((lat, lon))
+        
+        # has asn nodes that are close to the edge
+        if len(insertable_asn) > 0:
+            
+            item_distance_pairs = []
+            
+            # sort the asn nodes by distance to the start point of the edge for following cut option
+            for item in insertable_asn:
+                distance = G[city1][city2]['path_wkt'].project(
+                    Point(item[1], item[0]))
+                item_distance_pairs.append((item, distance))
+
+            sorted_item_distance_pairs = sorted(
+                item_distance_pairs, key=lambda x: x[1])
+
+            linestring_to_be_cut = G[city1][city2]['path_wkt']
+            linestring_to_be_cut_type = G[city1][city2]['cable_type']
+            
+            # append the start point of the edge
+            coordinate_list.append(G.nodes[city1]['coord'])
+            # append the cable type of the edge for the first segment
+            cable_type_list.append(linestring_to_be_cut_type)
+            
+            for item, distance in sorted_item_distance_pairs:
+                lat, lon = item
+                
+                splitted = cut(linestring_to_be_cut, linestring_to_be_cut.project(
+                    Point(lon, lat)), Point(lon, lat))
+                if len(splitted) < 2:
+                    continue
+                (l1, l2) = splitted
+
+                # append the first segment of the cutted edge, set the second segment as the next edge to be cut
+                wkt_list.append(l1)
+                # append all the intermediate asn points
+                coordinate_list.append(item)
+                # append the cable type of the edge for the intermediate segments
+                cable_type_list.append(linestring_to_be_cut_type)
+                linestring_to_be_cut = l2
+            
+            # append the last segment of the cutted edge
+            wkt_list.append(linestring_to_be_cut)
+                
+        else:
+            wkt_list.append(G[city1][city2]['path_wkt'])
+            coordinate_list.append(G.nodes[city1]['coord'])
+            cable_type_list.append(G[city1][city2]['cable_type'])
 
     # Append the coordinates of the last city after the loop
     coordinate_list.append(G.nodes[shortest_path_cities[-1]]['coord'])
@@ -207,8 +298,8 @@ def physical_route(src_latitude: float, src_longitude: float,
         shortest_path_cities: list[Location] = nx.shortest_path(
             G, source=src_city, target=dst_city, weight='distance')
 
-        shortest_distance, coordinate_list, wkt_list, cable_type_list = calculate_shortest_path_distance(
-            G, shortest_path_cities)
+        shortest_distance, coordinate_list, wkt_list, cable_type_list = \
+            calculate_shortest_path_distance(G, shortest_path_cities, app.asn_nodes)
 
         return {
             'routers_latlon': coordinate_list,
@@ -222,7 +313,8 @@ def physical_route(src_latitude: float, src_longitude: float,
 
 def run():
     app.db_file = '../database/igdb.db'
-    app.coord_city_map, app.coord_set, app.G = build_up_global_graph(app.db_file)
+    app.coord_city_map, app.coord_set, app.G, app.asn_nodes = \
+        build_up_global_graph(app.db_file)
     import uvicorn
     uvicorn.run(app, port=8083)
 
