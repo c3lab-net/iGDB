@@ -38,10 +38,6 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 def cut(line, distance, add_p):
     # Cuts a line in two at a distance from its starting point
     # This is taken from shapely manual
-    # if distance <= 0:
-    #     return [LineString(), LineString(line)]
-    # elif distance >= line.length:
-    #     return [LineString(line), LineString()]
     if distance <= 0.0 or distance >= line.length:
         print(distance, line, line.length, add_p, file=sys.stderr)
         return [LineString(line)]
