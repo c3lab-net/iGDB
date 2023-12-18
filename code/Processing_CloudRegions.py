@@ -1,17 +1,17 @@
 import argparse
 import csv
-import sys
+import logging
 import Querying_Database as qdb
 import geopandas as gpd
 
 import pandas as pd
 
-from collections import defaultdict
 from geopy.distance import geodesic
 from math import isclose, isnan, nan
-from shapely import wkt, shortest_line, LineString, Point
+from shapely import wkt, LineString, Point
 from sqlite3 import Row as sqlite_Row
 
+from Common import init_logging
 
 def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float) -> gpd.GeoDataFrame:
     querier = qdb.queryDatabase(db_path)
@@ -35,19 +35,20 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 
 # Taken from stackoverflow
 # https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
-def cut_linestring(line: LineString, distance: float = nan, point: Point = None) -> list[LineString]:
+def cut_linestring(line: LineString, distance: float = nan, to_add: Point = None) -> list[LineString]:
     """Cuts a linestring in two, either at a distance from its starting point, or at a location closest to the given point. If distance or point is at either end, then not cut is performed and only one linestring is returned."""
-    assert not (isnan(distance) and point is None), "Either distance or point must be given"
+    logging.debug(f"Cutting linestring {line} at distance {distance} or point {to_add}")
+    logging.debug(f"Line length: {line.length}")
+
+    assert not (isnan(distance) and to_add is None), "Either distance or point must be given"
     if isnan(distance):
-        distance = line.project(point)
+        distance = line.project(to_add)
+        logging.debug(f"Distance from point to line: {distance}")
 
     if isclose(distance, 0.0) or isclose(distance, line.length):
         return [LineString(line)]
     elif distance < 0.0 or distance > line.length:
-        raise ValueError(f"Distance out of range! {distance} {line.length} {line} {point}")
-
-    # The point to add is actually on the linestring.
-    to_add = line.interpolate(distance)
+        raise ValueError(f"Distance out of range! {distance} {line.length} {line} {to_add}")
 
     # This is taken from shapely manual
     coords = list(line.coords)
@@ -111,7 +112,7 @@ def add_cloud_regions_to_standard_paths(db_path: str,
 
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
-            splitted = cut_linestring(linestring, point=Point(lon, lat))
+            splitted = cut_linestring(linestring, to_add=Point(lon, lat))
             if len(splitted) < 2:
                 continue
             (l1, l2) = splitted
@@ -148,4 +149,5 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    init_logging()
     add_cloud_regions_to_standard_paths(args.database_path, args.cloud_region_coordinates_csv, args.max_distance)

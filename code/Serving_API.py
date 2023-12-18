@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import logging
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths
@@ -12,6 +13,7 @@ import sys
 from shapely import wkt, Point
 from shapely.geometry import LineString, MultiLineString
 from Processing_CloudRegions import cut_linestring
+from Common import init_logging
 
 
 Coordinate=tuple[float, float]
@@ -209,7 +211,7 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
             
             for coordinate, distance in sorted_item_distance_pairs:
                 lat, lon = coordinate
-                splitted = cut_linestring(linestring_to_be_cut, point=Point(lon, lat))
+                splitted = cut_linestring(linestring_to_be_cut, to_add=Point(lon, lat))
                 if len(splitted) < 2:
                     continue
                 (l1, l2) = splitted
@@ -320,4 +322,5 @@ def run():
 
 
 if __name__ == "__main__":
+    init_logging(level=logging.DEBUG)
     run()
