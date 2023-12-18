@@ -16,8 +16,9 @@ from Processing_CloudRegions import cut_linestring
 from Common import init_logging
 
 
-Coordinate=tuple[float, float]
-Location=tuple[str, str, str]
+Coordinate = tuple[float, float]
+Location = tuple[str, str, str]
+
 
 def city_formatter(city_info: Location) -> Location:
     city, state, country = city_info
@@ -54,19 +55,28 @@ def get_all_standard_paths(db_file: str):
     return data
 
 
-# fetch all asn nodes related to amazon from database
-def get_all_asn_node(db_file) -> list[Coordinate]:
-    """read asn node from database"""
+# fetch all asn locations related to amazon from database
+def get_all_as_locations(db_file, cloud_region_scope) -> list[Coordinate]:
+    """read asn locations from database"""
     coordinates: list[Coordinate] = []
     with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
-        sql_query = """
-        SELECT DISTINCT al.latitude, al.longitude
-        FROM asn_asname aa
-        JOIN asn_loc al ON aa.asn = al.asn
-        WHERE aa.asn_name LIKE '%amazon%' and al.physical_presence = 'True'
-            and latitude != 'NULL' and longitude != 'NULL';
-        """
+        if cloud_region_scope == 'amazon':
+            sql_query = """
+            SELECT DISTINCT al.latitude, al.longitude
+            FROM asn_asname aa
+            JOIN asn_loc al ON aa.asn = al.asn
+            WHERE aa.asn_name LIKE '%amazon%' and al.physical_presence = 'True'
+                and latitude != 'NULL' and longitude != 'NULL';
+            """
+        elif cloud_region_scope == 'google':
+            sql_query = """
+            SELECT DISTINCT al.latitude, al.longitude
+            FROM asn_asname aa
+            JOIN asn_loc al ON aa.asn = al.asn
+            WHERE aa.asn_name LIKE '%google%' and al.physical_presence = 'True'
+                and latitude != 'NULL' and longitude != 'NULL';
+            """
         cursor.execute(sql_query)
         data = cursor.fetchall()
     for row in data:
@@ -86,6 +96,7 @@ def create_linestring_from_latlon_list(latlon_list: list[Coordinate]) -> LineStr
     """helper function to create a linestring from a list of latlon"""
     return LineString([coordinate_reverser(coord) for coord in latlon_list])
 
+
 def parse_wkt_linestring(wkt_string: str) -> LineString:
     """helper function to get the src/dst coordinate from a wkt path"""
     try:
@@ -96,8 +107,8 @@ def parse_wkt_linestring(wkt_string: str) -> LineString:
 
 
 def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], coordinates: set[Coordinate],
-                       paths: list[tuple], submarine_option = False) -> \
-                        tuple[nx.Graph, dict[Coordinate, Location], set[Coordinate]]:
+                       paths: list[tuple], submarine_option=False) -> \
+        tuple[nx.Graph, dict[Coordinate, Location], set[Coordinate]]:
     for from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt in paths:
 
         from_city_info = city_formatter((from_city, from_state, from_country))
@@ -130,12 +141,18 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
     return G, coord_city_map, coordinates
 
 
-def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coordinate], nx.Graph]:
+def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coordinate], nx.Graph, dict[str, list[Coordinate]]]:
     print("Building up NX graph from paths...")
     submarine_standard_paths = get_all_submarine_standard_paths(db_file)
-    submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(db_file)
+    submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(
+        db_file)
     standard_paths = get_all_standard_paths(db_file)
-    asn_nodes = get_all_asn_node(db_file)
+
+    all_as_locations = {}
+    all_as_locations['amazon'] = get_all_as_locations(db_file, 'amazon')
+    all_as_locations['google'] = get_all_as_locations(db_file, 'google')
+    all_as_locations['all'] = all_as_locations['amazon'] + \
+        all_as_locations['google']
 
     G = nx.DiGraph()
     coord_city_map: dict[Coordinate, Location] = {}
@@ -148,10 +165,10 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, submarine_to_standard_paths_pairs)
 
-    return coord_city_map, coord_set, G, asn_nodes
+    return coord_city_map, coord_set, G, all_as_locations
 
 
-def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float) -> gpd.GeoDataFrame:
+def is_point_close_to_path(lat: float, lon: float, db_path: str, max_distance: float) -> bool:
     gs = gpd.GeoSeries(db_path)
 
     # The GeoDataFrame takes a coordinate system that it applies to the
@@ -164,11 +181,11 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
     # meters, and is what Google Maps uses.
     geodf["distance"] = geodf["intersection"].to_crs("EPSG:3857").length / 1000
 
-    return geodf[geodf["distance"] < max_distance]
+    return not geodf[geodf["distance"] < max_distance].empty
 
 
-def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate],
-                                     asn_nodes: list[Coordinate]) -> \
+def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate], cloud_region_scope: str,
+                                     all_as_locations: dict[str, list[Coordinate]]) -> \
         tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
     coordinate_list = []
@@ -182,18 +199,17 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
         total_distance += G[city1][city2]['weight']
         # Only append the coordinates of the source city here
         # for each edge, find all the available asn nodes that are close to the edge
-        insertable_asn = []
-        for lat, lon in asn_nodes:
-            result = find_closest_paths(lat, lon, G[city1][city2]['path_wkt'], 5)
-            if not result.empty:
-                insertable_asn.append((lat, lon))
+        insertable_as_locs = []
+        for lat, lon in all_as_locations[cloud_region_scope]:
+            if is_point_close_to_path(lat, lon, G[city1][city2]['path_wkt'], 5):
+                insertable_as_locs.append((lat, lon))
 
         # has asn nodes that are close to the edge
-        if len(insertable_asn) > 0:
+        if len(insertable_as_locs) > 0:
             item_distance_pairs = []
-            
+
             # sort the asn nodes by distance to the start point of the edge for following cut option
-            for coordinate in insertable_asn:
+            for coordinate in insertable_as_locs:
                 distance = G[city1][city2]['path_wkt'].project(
                     Point(coordinate[1], coordinate[0]))
                 item_distance_pairs.append((coordinate, distance))
@@ -203,15 +219,16 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
 
             linestring_to_be_cut = G[city1][city2]['path_wkt']
             linestring_to_be_cut_type = G[city1][city2]['cable_type']
-            
+
             # append the start point of the edge
             coordinate_list.append(G.nodes[city1]['coord'])
             # append the cable type of the edge for the first segment
             cable_type_list.append(linestring_to_be_cut_type)
-            
+
             for coordinate, distance in sorted_item_distance_pairs:
                 lat, lon = coordinate
-                splitted = cut_linestring(linestring_to_be_cut, to_add=Point(lon, lat))
+                splitted = cut_linestring(
+                    linestring_to_be_cut, to_add=Point(lon, lat))
                 if len(splitted) < 2:
                     continue
                 (l1, l2) = splitted
@@ -223,10 +240,10 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
                 # append the cable type of the edge for the intermediate segments
                 cable_type_list.append(linestring_to_be_cut_type)
                 linestring_to_be_cut = l2
-            
+
             # append the last segment of the cutted edge
             wkt_list.append(linestring_to_be_cut)
-                
+
         else:
             wkt_list.append(G[city1][city2]['path_wkt'])
             coordinate_list.append(G.nodes[city1]['coord'])
@@ -239,7 +256,7 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
 
 
 def connect_nearby_cities(G, name: str, coordinate: Coordinate, nearby_cities: list[Coordinate],
-                           coord_city_map: dict[Coordinate, Location]) -> None:
+                          coord_city_map: dict[Coordinate, Location]) -> None:
     """helper function to connect the closest cities to the graph"""
     nearby_city: Coordinate
     if coordinate in coord_city_map:
@@ -265,7 +282,7 @@ SAME_CITY_THRESHOLD_KM = 5
 
 @app.get("/physical-route/")
 def physical_route(src_latitude: float, src_longitude: float,
-                   dst_latitude: float, dst_longitude: float) -> dict:
+                   dst_latitude: float, dst_longitude: float, cloud_region_scope: str) -> dict:
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
@@ -273,7 +290,8 @@ def physical_route(src_latitude: float, src_longitude: float,
     dst_coordinate = (dst_latitude, dst_longitude)
     direct_distance_km = haversine(src_coordinate, dst_coordinate)
     if direct_distance_km < SAME_CITY_THRESHOLD_KM:
-        linestring = create_linestring_from_latlon_list([src_coordinate, dst_coordinate])
+        linestring = create_linestring_from_latlon_list(
+            [src_coordinate, dst_coordinate])
         return {
             'routers_latlon': [src_coordinate, dst_coordinate],
             'distance_km': direct_distance_km,
@@ -282,13 +300,17 @@ def physical_route(src_latitude: float, src_longitude: float,
         }
 
     # Convert input coordinates to city information
-    src_nearby_cities: list[Coordinate] = find_closest_points((src_latitude, src_longitude), app.coord_set)
-    dst_nearby_cities: list[Coordinate] = find_closest_points((dst_latitude, dst_longitude), app.coord_set)
+    src_nearby_cities: list[Coordinate] = find_closest_points(
+        (src_latitude, src_longitude), app.coord_set)
+    dst_nearby_cities: list[Coordinate] = find_closest_points(
+        (dst_latitude, dst_longitude), app.coord_set)
 
     G: nx.Graph = app.G.copy()
     coord_city_map: dict[Coordinate, Location] = app.coord_city_map.copy()
-    connect_nearby_cities(G, "src", src_coordinate, src_nearby_cities, coord_city_map)
-    connect_nearby_cities(G, "dst", dst_coordinate, dst_nearby_cities, coord_city_map)
+    connect_nearby_cities(G, "src", src_coordinate,
+                          src_nearby_cities, coord_city_map)
+    connect_nearby_cities(G, "dst", dst_coordinate,
+                          dst_nearby_cities, coord_city_map)
 
     src_city = coord_city_map[src_coordinate]
     dst_city = coord_city_map[dst_coordinate]
@@ -301,7 +323,8 @@ def physical_route(src_latitude: float, src_longitude: float,
             G, source=src_city, target=dst_city, weight='distance')
 
         shortest_distance, coordinate_list, wkt_list, cable_type_list = \
-            calculate_shortest_path_distance(G, shortest_path_cities, app.asn_nodes)
+            calculate_shortest_path_distance(
+                G, shortest_path_cities, cloud_region_scope, app.all_as_locations)
 
         return {
             'routers_latlon': coordinate_list,
@@ -315,7 +338,7 @@ def physical_route(src_latitude: float, src_longitude: float,
 
 def run():
     app.db_file = '../database/igdb.db'
-    app.coord_city_map, app.coord_set, app.G, app.asn_nodes = \
+    app.coord_city_map, app.coord_set, app.G, app.all_as_locations = \
         build_up_global_graph(app.db_file)
     import uvicorn
     uvicorn.run(app, port=8083)

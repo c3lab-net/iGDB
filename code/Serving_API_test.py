@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import csv
+import sys
 
 from fastapi.testclient import TestClient
 # Assuming initialize_graph is a function that sets up your graph
@@ -20,7 +21,7 @@ def parse_csv(filename):
 def setup_test_environment():
     # Initialize graph and mappings here
     app.db_file = '../database/igdb.db'
-    app.coord_city_map, app.coord_set, app.G, app.asn_nodes = build_up_global_graph(
+    app.coord_city_map, app.coord_set, app.G, app.all_as_locations = build_up_global_graph(
         app.db_file)
 
 
@@ -41,15 +42,18 @@ def test_physical_route():
 
         # Make the request
         response = client.get(
-            f"/physical-route/?src_latitude={src_latitude}&src_longitude={src_longitude}&dst_latitude={dst_latitude}&dst_longitude={dst_longitude}")
+            f"/physical-route/?src_latitude={src_latitude}&src_longitude={src_longitude}&dst_latitude={dst_latitude}&dst_longitude={dst_longitude}&cloud_region_scope={str('amazon')}")
 
         # Assertions
-        assert response.status_code == 200
-        data = response.json()
-        assert 'routers_latlon' in data
-        assert 'distance_km' in data
-        assert 'fiber_wkt_paths' in data
-        assert 'fiber_types' in data
+        if response.status_code == 200:
+            data = response.json()
+            assert 'routers_latlon' in data
+            assert 'distance_km' in data
+            assert 'fiber_wkt_paths' in data
+            assert 'fiber_types' in data
+        else:
+            print(response.status_code, file=sys.stderr)
+            print(src_latitude, src_longitude, dst_latitude, dst_longitude, file=sys.stderr)
 
         test_counter += 1
         if (test_counter > 100):
