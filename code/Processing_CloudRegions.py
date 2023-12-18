@@ -35,17 +35,19 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 
 # Taken from stackoverflow
 # https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
-def cut_linestring(line, distance: float = nan, point: Point = None) -> list[LineString]:
-    """Cuts a linestring in two, either at a distance from its starting point, or at a location closest to the given point."""
+def cut_linestring(line: LineString, distance: float = nan, point: Point = None) -> list[LineString]:
+    """Cuts a linestring in two, either at a distance from its starting point, or at a location closest to the given point. If distance or point is at either end, then not cut is performed and only one linestring is returned."""
     assert not (isnan(distance) and point is None), "Either distance or point must be given"
     if isnan(distance):
         distance = line.project(point)
-    to_add = line.interpolate(distance)
 
     if isclose(distance, 0.0) or isclose(distance, line.length):
         return [LineString(line)]
     elif distance < 0.0 or distance > line.length:
         raise ValueError(f"Distance out of range! {distance} {line.length} {line} {point}")
+
+    # The point to add is actually on the linestring.
+    to_add = line.interpolate(distance)
 
     # This is taken from shapely manual
     coords = list(line.coords)
