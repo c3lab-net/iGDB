@@ -8,7 +8,7 @@ import pandas as pd
 
 from collections import defaultdict
 from geopy.distance import geodesic
-from math import inf
+from math import isclose, isnan, nan
 from shapely import wkt, shortest_line, LineString, Point
 from sqlite3 import Row as sqlite_Row
 
@@ -35,16 +35,18 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 
 # Taken from stackoverflow
 # https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
-def cut(line, distance, add_p):
-    # Cuts a line in two at a distance from its starting point
-    # This is taken from shapely manual
-    # if distance <= 0:
-    #     return [LineString(), LineString(line)]
-    # elif distance >= line.length:
-    #     return [LineString(line), LineString()]
-    if distance <= 0.0 or distance >= line.length:
-        print(distance, line, line.length, add_p, file=sys.stderr)
+def cut_linestring(line, distance: float = nan, point: Point = None) -> list[LineString]:
+    """Cuts a linestring in two, either at a distance from its starting point, or at a location closest to the given point."""
+    assert not (isnan(distance) and point is None), "Either distance or point must be given"
+    if isnan(distance):
+        distance = line.project(point)
+
+    if isclose(distance, 0.0) or isclose(distance, line.length):
         return [LineString(line)]
+    elif distance < 0.0 or distance > line.length:
+        raise ValueError(f"Distance out of range! {distance} {line.length} {line} {point}")
+
+    # This is taken from shapely manual
     coords = list(line.coords)
     for i, p in enumerate(coords):
         pd = line.project(Point(p))
@@ -55,8 +57,8 @@ def cut(line, distance, add_p):
         if pd > distance:
             cp = line.interpolate(distance)
             return [
-                LineString(coords[:i] + [(cp.x, cp.y)] + [(add_p.x, add_p.y)]),
-                LineString([(add_p.x, add_p.y)] + [(cp.x, cp.y)] + coords[i:])]
+                LineString(coords[:i] + [(cp.x, cp.y)] + [(point.x, point.y)]),
+                LineString([(point.x, point.y)] + [(cp.x, cp.y)] + coords[i:])]
 
 
 def distance_of_linestring(ls: LineString) -> float:
@@ -106,8 +108,7 @@ def add_cloud_regions_to_standard_paths(db_path: str,
 
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
-            distance: float = linestring.project(Point(lon, lat))
-            splitted = cut(linestring, distance, Point(lon, lat))
+            splitted = cut_linestring(linestring, point=Point(lon, lat))
             if len(splitted) < 2:
                 continue
             (l1, l2) = splitted

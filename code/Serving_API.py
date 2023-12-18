@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths, floatFormatter
@@ -11,17 +12,21 @@ from shapely import wkt
 from shapely.geometry import LineString, MultiLineString
 
 
-def city_formatter(city_info):
+Coordinate=tuple[float, float]
+Location=tuple[str, str, str]
+
+def city_formatter(city_info: Location) -> Location:
     city, state, country = city_info
     return (city.strip(), state.strip(), country.strip())
 
 
-def find_closest_point(point, points_set):
+def find_closest_points(point: Coordinate, points_set: set[Coordinate], max_distance_km=150) -> list[Coordinate]:
     """find the closest point for a given coordinate in case it is not in the graph"""
-    return min(points_set, key=lambda p: haversine(point, p))
+    return list(filter(lambda p: haversine(point, p) < max_distance_km, points_set))
 
 
-def add_edge(G, city1, city2, distance, path_wkt, src_city_coord, dst_city_coord, cable_type):
+def add_edge(G, city1: Location, city2: Location, distance: float, path_wkt: str,
+             src_city_coord: Coordinate, dst_city_coord: Coordinate, cable_type: str):
     """helper function to build nx graph with src/dst city, src/dst coordinates, wkt path, cabel type and distance."""
     # Add or update nodes with their coordinates
     G.add_node(city1, coord=src_city_coord)
@@ -32,27 +37,30 @@ def add_edge(G, city1, city2, distance, path_wkt, src_city_coord, dst_city_coord
                src_city_coord=src_city_coord, dst_city_coord=dst_city_coord, cable_type=cable_type)
 
 
-def get_all_standard_paths(db_file):
+def get_all_standard_paths(db_file: str):
     """read standard paths from database"""
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
-    sql_query = """
-    SELECT sp.from_city, sp.from_state, sp.from_country, sp.to_city, sp.to_state, sp.to_country, sp.distance_km, sp.path_wkt
-    FROM standard_paths sp
-    """
-    cursor.execute(sql_query)
-    datas = cursor.fetchall()
-    conn.close()
-    return datas
+    with sqlite3.connect(db_file) as conn:
+        cursor = conn.cursor()
+        sql_query = """
+        SELECT sp.from_city, sp.from_state, sp.from_country, sp.to_city, sp.to_state, sp.to_country, sp.distance_km, sp.path_wkt
+        FROM standard_paths sp
+        """
+        cursor.execute(sql_query)
+        data = cursor.fetchall()
+    return data
 
 
-def coordinate_reverser(coord):
+def coordinate_reverser(coord: Coordinate) -> Coordinate:
     """lati and longti in wkt path is reversed, use this helper function to reverse that"""
     coord_longti, coord_lati = coord
     return (coord_lati, coord_longti)
 
 
-def parse_wkt_linestring(wkt_string) -> LineString:
+def create_linestring_from_latlon_list(latlon_list: list[Coordinate]) -> LineString:
+    """helper function to create a linestring from a list of latlon"""
+    return LineString([coordinate_reverser(coord) for coord in latlon_list])
+
+def parse_wkt_linestring(wkt_string: str) -> LineString:
     """helper function to get the src/dst coordinate from a wkt path"""
     try:
         return wkt.loads(wkt_string)
@@ -61,8 +69,10 @@ def parse_wkt_linestring(wkt_string) -> LineString:
         return None
 
 
-def graph_build_helper(G, coord_city_map, coord_set, path_set, submarine_option = False):
-    for from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt in path_set:
+def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], coordinates: set[Coordinate],
+                       paths: list[tuple], submarine_option = False) -> \
+                        tuple[nx.Graph, dict[Coordinate, Location], set[Coordinate]]:
+    for from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt in paths:
 
         from_city_info = city_formatter((from_city, from_state, from_country))
         to_city_info = city_formatter((to_city, to_state, to_country))
@@ -76,11 +86,11 @@ def graph_build_helper(G, coord_city_map, coord_set, path_set, submarine_option 
         end_city_coord = linestring.coords[-1]
         start_city_coord = coordinate_reverser(start_city_coord)
         end_city_coord = coordinate_reverser(end_city_coord)
-        coord_city_map[start_city_coord] = from_city_info
 
-        coord_set.append(start_city_coord)
+        coord_city_map[start_city_coord] = from_city_info
+        coordinates.append(start_city_coord)
         coord_city_map[end_city_coord] = to_city_info
-        coord_set.append(end_city_coord)
+        coordinates.append(end_city_coord)
 
         edge_type = 'land'
 
@@ -89,18 +99,18 @@ def graph_build_helper(G, coord_city_map, coord_set, path_set, submarine_option 
 
         add_edge(G, from_city_info, to_city_info, distance_km, linestring, start_city_coord, end_city_coord, edge_type)
         add_edge(G, to_city_info, from_city_info, distance_km, LineString(linestring.coords[::-1]), end_city_coord, start_city_coord, edge_type)
-    return G, coord_city_map, coord_set
+    return G, coord_city_map, coordinates
 
 
-def build_up_global_graph(db_file):
+def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coordinate], nx.Graph]:
+    print("Building up NX graph from paths...")
     submarine_standard_paths = get_all_submarine_standard_paths(db_file)
-
-    submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(
-        db_file)
+    submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(db_file)
     standard_paths = get_all_standard_paths(db_file)
+
     G = nx.DiGraph()
-    coord_city_map = {}
-    coord_set = []
+    coord_city_map: dict[Coordinate, Location] = {}
+    coord_set: set[Coordinate] = []
 
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, standard_paths)
@@ -112,7 +122,8 @@ def build_up_global_graph(db_file):
     return coord_city_map, coord_set, G
 
 
-def calculate_shortest_path_distance(G, shortest_path_cities):
+def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate]) -> \
+        tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
     coordinate_list = []
     wkt_list: list[LineString] = []
@@ -134,7 +145,29 @@ def calculate_shortest_path_distance(G, shortest_path_cities):
     return total_distance, coordinate_list, MultiLineString(wkt_list).wkt, cable_type_list
 
 
+def connect_nearby_cities(G, name: str, coordinate: Coordinate, nearby_cities: list[Coordinate],
+                           coord_city_map: dict[Coordinate, Location]) -> None:
+    """helper function to connect the closest cities to the graph"""
+    nearby_city: Coordinate
+    if coordinate in coord_city_map:
+        node_name = coord_city_map[coordinate]
+    else:
+        node_name = Location((name, "", ""))
+        G.add_node(node_name, coord=coordinate)
+        coord_city_map[coordinate] = node_name
+
+    for nearby_city in nearby_cities:
+        nearby_city_name = coord_city_map[nearby_city]
+        distance_km = haversine(coordinate, nearby_city)
+        add_edge(G, node_name, nearby_city_name, distance_km,
+                 create_linestring_from_latlon_list([coordinate, nearby_city]), coordinate, nearby_city, 'land')
+        add_edge(G, nearby_city_name, node_name, distance_km,
+                 create_linestring_from_latlon_list([nearby_city, coordinate]), nearby_city, coordinate, 'land')
+
+
 app = FastAPI()
+
+SAME_CITY_THRESHOLD_KM = 5
 
 
 @app.get("/physical-route/")
@@ -143,30 +176,39 @@ def physical_route(src_latitude: float, src_longitude: float,
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
-    # Convert input coordinates to city information
-    src_city_co = find_closest_point((src_latitude, src_longitude), app.coord_set)
-    dst_city_co = find_closest_point((dst_latitude, dst_longitude), app.coord_set)
-
-    if src_city_co == dst_city_co:
+    src_coordinate = (src_latitude, src_longitude)
+    dst_coordinate = (dst_latitude, dst_longitude)
+    direct_distance_km = haversine(src_coordinate, dst_coordinate)
+    if direct_distance_km < SAME_CITY_THRESHOLD_KM:
+        linestring = create_linestring_from_latlon_list([src_coordinate, dst_coordinate])
         return {
-            'routers_latlon': [src_city_co, dst_city_co],
-            'distance_km': 0,
-            'fiber_wkt_paths': MultiLineString([LineString([src_city_co, dst_city_co])]).wkt,
+            'routers_latlon': [src_coordinate, dst_coordinate],
+            'distance_km': direct_distance_km,
+            'fiber_wkt_paths': MultiLineString([linestring]).wkt,
             'fiber_types': ['land'],
         }
 
-    src_city_info = app.coord_city_map[src_city_co]
-    dst_city_info = app.coord_city_map[dst_city_co]
+    # Convert input coordinates to city information
+    src_nearby_cities: list[Coordinate] = find_closest_points((src_latitude, src_longitude), app.coord_set)
+    dst_nearby_cities: list[Coordinate] = find_closest_points((dst_latitude, dst_longitude), app.coord_set)
 
-    assert src_city_info and dst_city_info
+    G: nx.Graph = app.G.copy()
+    coord_city_map: dict[Coordinate, Location] = app.coord_city_map.copy()
+    connect_nearby_cities(G, "src", src_coordinate, src_nearby_cities, coord_city_map)
+    connect_nearby_cities(G, "dst", dst_coordinate, dst_nearby_cities, coord_city_map)
+
+    src_city = coord_city_map[src_coordinate]
+    dst_city = coord_city_map[dst_coordinate]
+
+    assert src_city and dst_city
 
     # Find shortest path between cities in the graph
     try:
-        shortest_path_cities = nx.shortest_path(
-            app.G, source=src_city_info, target=dst_city_info, weight='distance')
+        shortest_path_cities: list[Location] = nx.shortest_path(
+            G, source=src_city, target=dst_city, weight='distance')
 
         shortest_distance, coordinate_list, wkt_list, cable_type_list = calculate_shortest_path_distance(
-            app.G, shortest_path_cities)
+            G, shortest_path_cities)
 
         return {
             'routers_latlon': coordinate_list,
@@ -175,14 +217,14 @@ def physical_route(src_latitude: float, src_longitude: float,
             'fiber_types': cable_type_list,
         }
     except nx.NetworkXNoPath:
-        raise HTTPException(status_code=400, detail="Shortest path is invalid")
+        raise HTTPException(status_code=400, detail="No shortest path found")
 
 
 def run():
     app.db_file = '../database/igdb.db'
     app.coord_city_map, app.coord_set, app.G = build_up_global_graph(app.db_file)
     import uvicorn
-    uvicorn.run(app, port=8082)
+    uvicorn.run(app, port=8083)
 
 
 if __name__ == "__main__":

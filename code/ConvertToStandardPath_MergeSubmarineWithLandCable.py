@@ -10,7 +10,10 @@ def get_landing_point_coord_from_database(db_file):
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     cursor.execute(
-        'SELECT lp.latitude, lp.longitude, lp.city_name, lp.state_province, lp.country FROM landing_points lp;')
+        """SELECT lp.latitude, lp.longitude, clp.city_name, clp.state_province, clp.country
+            FROM cable_landing_points clp, landing_points lp
+            WHERE clp.city_name = lp.city_name 
+                AND (' ' || clp.country) = lp.country;""")
     datas = cursor.fetchall()
     for data in datas:
         landing_point_coord.append(data)
@@ -63,13 +66,13 @@ def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_m
         path_wkt TEXT \
     );")
 
-    for key, value in city_mapping.items():
-        from_city, from_state, from_country = key
-        to_city, to_state, to_country, distance, landing_point_coord, phys_nodes_coord = value
-        path_wkt = coord_list_to_linestring(
-            [landing_point_coord, phys_nodes_coord])
-        # Execute insert query
-        cursor.execute("INSERT INTO submarine_to_standard_paths (from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    for landing_point, physical_nodes in city_mapping.items():
+        from_city, from_state, from_country, from_coord = landing_point
+        for physical_node in physical_nodes:
+            to_city, to_state, to_country, to_coord, distance = physical_node
+            path_wkt = coord_list_to_linestring([from_coord, to_coord])
+            # Execute insert query
+            cursor.execute("INSERT INTO submarine_to_standard_paths (from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                        (from_city, from_state, from_country, to_city, to_state, to_country, distance, path_wkt))
 
     conn.commit()
@@ -89,34 +92,27 @@ def get_all_submarine_to_standard_paths_pairs(db_file):
 
     return datas
 
-def map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords):
-    print("\tMapping landing point cities to closest physical node...")
+def map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords) -> dict[tuple, list[tuple]]:
+    print("\tMapping landing point cities to nearby physical nodes...")
+    DISTANCE_THRESHOLD_KM = 160
     city_mapping = {}
     for landing_point_lati, landing_point_longti, landing_point_city, landing_point_state, landing_point_country in landing_point_coords:
         landing_point_coord = (landing_point_lati, landing_point_longti)
-        min_distance = float('inf')
-        best_city = None
-        best_state = None
-        best_country = None
-        best_coord = None
         for phys_nodes_lati, phys_nodes_longti, phys_nodes_city, phys_nodes_state, phys_nodes_country in phys_nodes_coords:
             phys_nodes_coord = (phys_nodes_lati, phys_nodes_longti)
             if not isinstance(phys_nodes_coord[0], float):
                 continue
-            currdistance = haversine(landing_point_coord, phys_nodes_coord)
-            if (currdistance < min_distance):
-                best_city = phys_nodes_city
-                min_distance = currdistance
-                best_state = phys_nodes_state
-                best_country = phys_nodes_country
-                best_coord = phys_nodes_coord
+            distance_km = haversine(landing_point_coord, phys_nodes_coord)
+            if distance_km > DISTANCE_THRESHOLD_KM:
+                # print(
+                    # f"warning for city {landing_point_city}, {landing_point_country} and {phys_nodes_city}, {phys_nodes_country} with distance {distance_km}", file=sys.stderr)
+                continue
 
-        if (min_distance > 160):
-            print(
-                f"warning for city {landing_point_city}, {landing_point_country} and {best_city}, {best_country} with distance {min_distance}", file=sys.stderr)
-        else:
-            city_mapping[(landing_point_city, landing_point_state, landing_point_country)] = (
-                best_city, best_state, best_country, min_distance, landing_point_coord, best_coord)
+            landing_point = (landing_point_city, landing_point_state, landing_point_country, landing_point_coord)
+            physical_node = (phys_nodes_city, phys_nodes_state, phys_nodes_country, phys_nodes_coord, distance_km)
+            if landing_point not in city_mapping:
+                city_mapping[landing_point] = []
+            city_mapping[landing_point].append(physical_node)
     return city_mapping
 
 
