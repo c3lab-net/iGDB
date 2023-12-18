@@ -24,6 +24,10 @@ Location = tuple[str, str, str]
 THRESHOLD_SAME_CITY_DISTANCE_KM = 5
 # Maximum distance from either endpoint to a city in ths existing graph to add an edge
 THRESHOLD_ENDPOINT_TO_HOP_MAX_DISTANCE_KM = 150
+# Minimum distance between new AS location to insert and existing cities
+THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM = 100
+# Maximum distance between new AS location to insert and existing paths
+THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM = 50
 
 def city_formatter(city_info: Location) -> Location:
     city, state, country = city_info
@@ -204,17 +208,20 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
     for i in range(len(shortest_path_cities) - 1):
         city1 = shortest_path_cities[i]
         city2 = shortest_path_cities[i + 1]
+        distance_km = G[city1][city2]['weight']
+        total_distance += distance_km
 
-        total_distance += G[city1][city2]['weight']
-        # Only append the coordinates of the source city here
-        # for each edge, find all the available asn nodes that are close to the edge
-        insertable_as_locs = []
-        for lat, lon in all_as_locations[cloud_region_scope]:
-            if is_point_close_to_path(lat, lon, G[city1][city2]['path_wkt'], 5):
-                insertable_as_locs.append((lat, lon))
+        # Skip AS location search if the distance between two cities is too small
+        search_for_nearby_as_locations = distance_km > THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM
+        if search_for_nearby_as_locations:
+            insertable_as_locs = []
+            for lat, lon in all_as_locations[cloud_region_scope]:
+                if is_point_close_to_path(lat, lon, G[city1][city2]['path_wkt'],
+                                          THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM):
+                    insertable_as_locs.append((lat, lon))
 
         # has asn nodes that are close to the edge
-        if len(insertable_as_locs) > 0:
+        if search_for_nearby_as_locations and len(insertable_as_locs) > 0:
             item_distance_pairs = []
 
             # sort the asn nodes by distance to the start point of the edge for following cut option
@@ -235,6 +242,9 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
             cable_type_list.append(linestring_to_be_cut_type)
 
             for coordinate, distance in sorted_item_distance_pairs:
+                # Skip this new location if it is too close to the last node
+                if haversine(coordinate_list[-1], coordinate) < THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM:
+                    continue
                 lat, lon = coordinate
                 splitted = cut_linestring(
                     linestring_to_be_cut, to_add=Point(lon, lat))
