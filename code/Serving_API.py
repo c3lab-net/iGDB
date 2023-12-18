@@ -117,7 +117,7 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
             continue
         linestring = parse_wkt_linestring(path_wkt)
         if linestring is None:
-            print(f"invalid wkt string {path_wkt}", sys.stderr)
+            print(f"invalid wkt string {path_wkt}", file=sys.stderr)
             continue
         start_city_coord = linestring.coords[0]
         end_city_coord = linestring.coords[-1]
@@ -165,7 +165,7 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, submarine_to_standard_paths_pairs)
 
-    return coord_city_map, coord_set, G, all_as_locations
+    return coord_city_map, set(coord_set), G, all_as_locations
 
 
 def is_point_close_to_path(lat: float, lon: float, db_path: str, max_distance: float) -> bool:
