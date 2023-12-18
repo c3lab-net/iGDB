@@ -53,20 +53,25 @@ def get_all_standard_paths(db_file: str):
 
 
 # fetch all asn nodes related to amazon from database
-def get_all_asn_node(db_file):
+def get_all_asn_node(db_file) -> list[Coordinate]:
     """read asn node from database"""
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
-    sql_query = """
-    SELECT DISTINCT al.latitude, al.longitude
-    FROM asn_asname aa
-    JOIN asn_loc al ON aa.asn = al.asn
-    WHERE aa.asn_name LIKE '%amazon%' and al.physical_presence = 'True';
-    """
-    cursor.execute(sql_query)
-    datas = cursor.fetchall()
-    conn.close()
-    return datas
+    coordinates: list[Coordinate] = []
+    with sqlite3.connect(db_file) as conn:
+        cursor = conn.cursor()
+        sql_query = """
+        SELECT DISTINCT al.latitude, al.longitude
+        FROM asn_asname aa
+        JOIN asn_loc al ON aa.asn = al.asn
+        WHERE aa.asn_name LIKE '%amazon%' and al.physical_presence = 'True'
+            and latitude != 'NULL' and longitude != 'NULL';
+        """
+        cursor.execute(sql_query)
+        data = cursor.fetchall()
+    for row in data:
+        latitude = float(row[0])
+        longitude = float(row[1])
+        coordinates.append((latitude, longitude))
+    return coordinates
 
 
 def coordinate_reverser(coord: Coordinate) -> Coordinate:
@@ -161,7 +166,7 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 
 
 def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate],
-                                     asn_nodes: list) -> \
+                                     asn_nodes: list[Coordinate]) -> \
         tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
     coordinate_list = []
@@ -177,15 +182,12 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
         # for each edge, find all the available asn nodes that are close to the edge
         insertable_asn = []
         for lat, lon in asn_nodes:
-            if lat != 'NULL' and lon != 'NULL':
-                result = find_closest_paths(
-                    lat, lon, G[city1][city2]['path_wkt'], 5)
-                if not result.empty:
-                    insertable_asn.append((lat, lon))
-        
+            result = find_closest_paths(lat, lon, G[city1][city2]['path_wkt'], 5)
+            if not result.empty:
+                insertable_asn.append((lat, lon))
+
         # has asn nodes that are close to the edge
         if len(insertable_asn) > 0:
-            
             item_distance_pairs = []
             
             # sort the asn nodes by distance to the start point of the edge for following cut option
