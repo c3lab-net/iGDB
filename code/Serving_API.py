@@ -20,13 +20,22 @@ Coordinate = tuple[float, float]
 Location = tuple[str, str, str]
 
 
+# Minimum distance between two cities to be considered as different cities
+THRESHOLD_SAME_CITY_DISTANCE_KM = 5
+# Maximum distance from either endpoint to a city in ths existing graph to add an edge
+THRESHOLD_ENDPOINT_TO_HOP_MAX_DISTANCE_KM = 150
+
 def city_formatter(city_info: Location) -> Location:
     city, state, country = city_info
     return (city.strip(), state.strip(), country.strip())
 
 
-def find_closest_points(point: Coordinate, points_set: set[Coordinate], max_distance_km=150) -> list[Coordinate]:
-    """find the closest point for a given coordinate in case it is not in the graph"""
+def find_closest_points(point: Coordinate, points_set: set[Coordinate],
+                        max_distance_km=THRESHOLD_ENDPOINT_TO_HOP_MAX_DISTANCE_KM) -> list[Coordinate]:
+    """Find the closest point for a given coordinate in case it is not in the graph.
+
+    For either endpoint of the request, we find the closest points in the graph within the given threshold.
+    """
     return list(filter(lambda p: haversine(point, p) < max_distance_km, points_set))
 
 
@@ -277,9 +286,6 @@ def connect_nearby_cities(G, name: str, coordinate: Coordinate, nearby_cities: l
 
 app = FastAPI()
 
-SAME_CITY_THRESHOLD_KM = 5
-
-
 @app.get("/physical-route/")
 def physical_route(src_latitude: float, src_longitude: float,
                    dst_latitude: float, dst_longitude: float, cloud_region_scope: str) -> dict:
@@ -289,7 +295,7 @@ def physical_route(src_latitude: float, src_longitude: float,
     src_coordinate = (src_latitude, src_longitude)
     dst_coordinate = (dst_latitude, dst_longitude)
     direct_distance_km = haversine(src_coordinate, dst_coordinate)
-    if direct_distance_km < SAME_CITY_THRESHOLD_KM:
+    if direct_distance_km < THRESHOLD_SAME_CITY_DISTANCE_KM:
         linestring = create_linestring_from_latlon_list(
             [src_coordinate, dst_coordinate])
         return {
