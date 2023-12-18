@@ -11,7 +11,7 @@ import sys
 
 from shapely import wkt, Point
 from shapely.geometry import LineString, MultiLineString
-from Processing_CloudRegions import cut
+from Processing_CloudRegions import cut_linestring
 
 
 Coordinate=tuple[float, float]
@@ -191,10 +191,10 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
             item_distance_pairs = []
             
             # sort the asn nodes by distance to the start point of the edge for following cut option
-            for item in insertable_asn:
+            for coordinate in insertable_asn:
                 distance = G[city1][city2]['path_wkt'].project(
-                    Point(item[1], item[0]))
-                item_distance_pairs.append((item, distance))
+                    Point(coordinate[1], coordinate[0]))
+                item_distance_pairs.append((coordinate, distance))
 
             sorted_item_distance_pairs = sorted(
                 item_distance_pairs, key=lambda x: x[1])
@@ -207,11 +207,9 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
             # append the cable type of the edge for the first segment
             cable_type_list.append(linestring_to_be_cut_type)
             
-            for item, distance in sorted_item_distance_pairs:
-                lat, lon = item
-                
-                splitted = cut(linestring_to_be_cut, linestring_to_be_cut.project(
-                    Point(lon, lat)), Point(lon, lat))
+            for coordinate, distance in sorted_item_distance_pairs:
+                lat, lon = coordinate
+                splitted = cut_linestring(linestring_to_be_cut, point=Point(lon, lat))
                 if len(splitted) < 2:
                     continue
                 (l1, l2) = splitted
@@ -219,7 +217,7 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
                 # append the first segment of the cutted edge, set the second segment as the next edge to be cut
                 wkt_list.append(l1)
                 # append all the intermediate asn points
-                coordinate_list.append(item)
+                coordinate_list.append(coordinate)
                 # append the cable type of the edge for the intermediate segments
                 cable_type_list.append(linestring_to_be_cut_type)
                 linestring_to_be_cut = l2
