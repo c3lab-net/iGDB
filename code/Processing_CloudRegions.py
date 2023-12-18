@@ -8,7 +8,7 @@ import pandas as pd
 
 from collections import defaultdict
 from geopy.distance import geodesic
-from math import inf
+from math import inf, isclose
 from shapely import wkt, shortest_line, LineString, Point
 from sqlite3 import Row as sqlite_Row
 
@@ -36,11 +36,13 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 # Taken from stackoverflow
 # https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
 def cut(line, distance, add_p):
-    # Cuts a line in two at a distance from its starting point
-    # This is taken from shapely manual
-    if distance <= 0.0 or distance >= line.length:
-        print(distance, line, line.length, add_p, file=sys.stderr)
+    """Cuts a line in two at a distance from its starting point."""
+    if isclose(distance, 0.0) or isclose(distance, line.length):
         return [LineString(line)]
+    elif distance < 0.0 or distance > line.length:
+        raise ValueError(f"Distance out of range! {distance} {line.length} {line} {add_p}")
+
+    # This is taken from shapely manual
     coords = list(line.coords)
     for i, p in enumerate(coords):
         pd = line.project(Point(p))
