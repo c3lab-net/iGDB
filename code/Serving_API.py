@@ -162,10 +162,8 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     standard_paths = get_all_standard_paths(db_file)
 
     all_as_locations = {}
-    all_as_locations['amazon'] = get_as_locations(db_file, 'amazon')
-    all_as_locations['google'] = get_as_locations(db_file, 'google')
-    all_as_locations['all'] = all_as_locations['amazon'] + \
-        all_as_locations['google']
+    all_as_locations['aws'] = get_as_locations(db_file, 'amazon')
+    all_as_locations['gcloud'] = get_as_locations(db_file, 'google')
 
     G = nx.DiGraph()
     coord_city_map: dict[Coordinate, Location] = {}
@@ -197,8 +195,8 @@ def is_point_close_to_path(lat: float, lon: float, db_path: str, max_distance: f
     return not geodf[geodf["distance"] < max_distance].empty
 
 
-def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate], cloud_region_scope: str,
-                                     all_as_locations: dict[str, list[Coordinate]]) -> \
+def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate],
+                                     as_locations: list[Coordinate]) -> \
         tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
     coordinate_list = []
@@ -215,7 +213,7 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
         search_for_nearby_as_locations = distance_km > THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM
         if search_for_nearby_as_locations:
             insertable_as_locs = []
-            for lat, lon in all_as_locations[cloud_region_scope]:
+            for lat, lon in as_locations:
                 if is_point_close_to_path(lat, lon, G[city1][city2]['path_wkt'],
                                           THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM):
                     insertable_as_locs.append((lat, lon))
@@ -298,7 +296,8 @@ app = FastAPI()
 
 @app.get("/physical-route/")
 def physical_route(src_latitude: float, src_longitude: float,
-                   dst_latitude: float, dst_longitude: float, cloud_region_scope: str) -> dict:
+                   dst_latitude: float, dst_longitude: float,
+                   src_cloud: str, dst_cloud: str) -> dict:
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
@@ -337,20 +336,20 @@ def physical_route(src_latitude: float, src_longitude: float,
     try:
         shortest_path_cities: list[Location] = nx.shortest_path(
             G, source=src_city, target=dst_city, weight='distance')
-
-        shortest_distance, coordinate_list, wkt_list, cable_type_list = \
-            calculate_shortest_path_distance(
-                G, shortest_path_cities, cloud_region_scope, app.all_as_locations)
-
-        return {
-            'routers_latlon': coordinate_list,
-            'distance_km': shortest_distance,
-            'fiber_wkt_paths': wkt_list,
-            'fiber_types': cable_type_list,
-        }
     except nx.NetworkXNoPath:
         raise HTTPException(status_code=400, detail="No shortest path found")
 
+    all_clouds = set([src_cloud, dst_cloud])
+    as_locations = [location for cloud in all_clouds for location in app.all_as_locations[cloud]]
+    shortest_distance, coordinate_list, wkt_list, cable_type_list = \
+        calculate_shortest_path_distance(G, shortest_path_cities, as_locations)
+
+    return {
+        'routers_latlon': coordinate_list,
+        'distance_km': shortest_distance,
+        'fiber_wkt_paths': wkt_list,
+        'fiber_types': cable_type_list,
+    }
 
 def run():
     app.db_file = '../database/igdb.db'
