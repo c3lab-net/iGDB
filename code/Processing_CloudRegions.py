@@ -40,6 +40,7 @@ def cut_linestring(line, distance: float = nan, point: Point = None) -> list[Lin
     assert not (isnan(distance) and point is None), "Either distance or point must be given"
     if isnan(distance):
         distance = line.project(point)
+    to_add = line.interpolate(distance)
 
     if isclose(distance, 0.0) or isclose(distance, line.length):
         return [LineString(line)]
@@ -57,8 +58,8 @@ def cut_linestring(line, distance: float = nan, point: Point = None) -> list[Lin
         if pd > distance:
             cp = line.interpolate(distance)
             return [
-                LineString(coords[:i] + [(cp.x, cp.y)] + [(point.x, point.y)]),
-                LineString([(point.x, point.y)] + [(cp.x, cp.y)] + coords[i:])]
+                LineString(coords[:i] + [(cp.x, cp.y)] + [(to_add.x, to_add.y)]),
+                LineString([(to_add.x, to_add.y)] + [(cp.x, cp.y)] + coords[i:])]
 
 
 def distance_of_linestring(ls: LineString) -> float:
