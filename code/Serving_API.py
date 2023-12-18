@@ -56,7 +56,7 @@ def get_all_standard_paths(db_file: str):
 
 
 # fetch all asn locations related to amazon from database
-def get_all_as_locations(db_file, cloud_region_scope) -> list[Coordinate]:
+def get_as_locations(db_file, cloud_region_scope) -> list[Coordinate]:
     """read asn locations from database"""
     coordinates: list[Coordinate] = []
     with sqlite3.connect(db_file) as conn:
@@ -149,8 +149,8 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     standard_paths = get_all_standard_paths(db_file)
 
     all_as_locations = {}
-    all_as_locations['amazon'] = get_all_as_locations(db_file, 'amazon')
-    all_as_locations['google'] = get_all_as_locations(db_file, 'google')
+    all_as_locations['amazon'] = get_as_locations(db_file, 'amazon')
+    all_as_locations['google'] = get_as_locations(db_file, 'google')
     all_as_locations['all'] = all_as_locations['amazon'] + \
         all_as_locations['google']
 
