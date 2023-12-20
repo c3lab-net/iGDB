@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
+import time
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths
@@ -179,97 +180,93 @@ def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coor
     return coord_city_map, set(coord_set), G, all_as_locations
 
 
-def is_point_close_to_path(lat: float, lon: float, db_path: str, max_distance: float) -> bool:
-    gs = gpd.GeoSeries(db_path)
+def get_points_close_to_path(coordinates: list[Coordinate], line: LineString, max_distance: float) -> list[Point]:
+    """Return a subset of the coordinates in Point format that are within max_distance of the line.
 
+    Note that the coordinates are in (lat, lon) format, but the line and return values is in (lon, lat) format.
+    """
     # The GeoDataFrame takes a coordinate system that it applies to the
     # 'geometry' column. The EPSG:4326 coordinate system is latitude,
-    # longitude.
-    geodf = gpd.GeoDataFrame(geometry=gs, crs="EPSG:4326")
-    geodf["intersection"] = geodf["geometry"].shortest_line(Point(lon, lat))
+    # longitude. EPSG:3857 coordinate system has units of meters.
+    gdf = gpd.GeoDataFrame(geometry=[Point(lon, lat) for lat, lon in coordinates], crs="EPSG:4326")
+    gdf['shortest_line'] = gdf['geometry'].shortest_line(line)
     # Before calculating distances we need to change coordinate systems to one
     # that has a unit of length. The EPSG:3857 coordinate system has units of
     # meters, and is what Google Maps uses.
-    geodf["distance"] = geodf["intersection"].to_crs("EPSG:3857").length / 1000
+    gdf["distance"] = gdf["shortest_line"].to_crs("EPSG:3857").length / 1000
 
-    return not geodf[geodf["distance"] < max_distance].empty
+    return gdf[gdf["distance"] < max_distance]['geometry'].to_list()
 
 
 def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate],
                                      as_locations: list[Coordinate]) -> \
         tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
-    coordinate_list = []
-    wkt_list: list[LineString] = []
-    cable_type_list = []
+    coordinate_list: list[Coordinate] = []
+    cable_path_list: list[LineString] = []
+    cable_type_list: list[str] = []
 
     for i in range(len(shortest_path_cities) - 1):
-        city1 = shortest_path_cities[i]
-        city2 = shortest_path_cities[i + 1]
-        distance_km = G[city1][city2]['weight']
+        city1: str = shortest_path_cities[i]
+        city2: str = shortest_path_cities[i + 1]
+        city1_coord: Coordinate = G.nodes[city1]['coord']
+        city2_coord: Coordinate = G.nodes[city2]['coord']
+        distance_km: float = G[city1][city2]['weight']
+        cable_path: LineString = G[city1][city2]['path_wkt']
+        cable_type: str = G[city1][city2]['cable_type']
         total_distance += distance_km
+
+        logging.debug(f'Processing edge {city1} -> {city2} with distance {distance_km} km')
 
         # Skip AS location search if the distance between two cities is too small
         search_for_nearby_as_locations = distance_km > THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM
         if search_for_nearby_as_locations:
-            insertable_as_locs = []
-            for lat, lon in as_locations:
-                if is_point_close_to_path(lat, lon, G[city1][city2]['path_wkt'],
-                                          THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM):
-                    insertable_as_locs.append((lat, lon))
+            nearby_as_points = get_points_close_to_path(as_locations, cable_path,
+                                                        THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM)
 
-        # has asn nodes that are close to the edge
-        if search_for_nearby_as_locations and len(insertable_as_locs) > 0:
-            item_distance_pairs = []
-
-            # sort the asn nodes by distance to the start point of the edge for following cut option
-            for coordinate in insertable_as_locs:
-                distance = G[city1][city2]['path_wkt'].project(
-                    Point(coordinate[1], coordinate[0]))
-                item_distance_pairs.append((coordinate, distance))
-
-            sorted_item_distance_pairs = sorted(
-                item_distance_pairs, key=lambda x: x[1])
-
-            linestring_to_be_cut = G[city1][city2]['path_wkt']
-            linestring_to_be_cut_type = G[city1][city2]['cable_type']
+        # If there are AS locations nearby, we need to cut the edge into multiple segments at theses locations
+        if search_for_nearby_as_locations and len(nearby_as_points) > 0:
+            # sort the AS location points by distance to the start point of the edge
+            nearby_as_points = sorted(nearby_as_points, key=lambda p: cable_path.project(p))
 
             # append the start point of the edge
-            coordinate_list.append(G.nodes[city1]['coord'])
+            coordinate_list.append(city1_coord)
             # append the cable type of the edge for the first segment
-            cable_type_list.append(linestring_to_be_cut_type)
+            cable_type_list.append(cable_type)
 
-            for coordinate, distance in sorted_item_distance_pairs:
-                # Skip this new location if it is too close to the last node
-                if haversine(coordinate_list[-1], coordinate) < THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM:
+            path_to_be_cut: LineString = cable_path
+            for point in nearby_as_points:
+                # Point is in (lon, lat) format, but coordinate is in (lat, lon) format
+                coordinate = (point.y, point.x)
+                # Skip this new location if it is too close to the last node or next city
+                min_distance_to_insert = THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM
+                if haversine(coordinate_list[-1], coordinate) < min_distance_to_insert or \
+                        haversine(coordinate, city2_coord) < min_distance_to_insert:
                     continue
-                lat, lon = coordinate
-                splitted = cut_linestring(
-                    linestring_to_be_cut, to_add=Point(lon, lat))
+                splitted = cut_linestring(path_to_be_cut, to_add=point)
                 if len(splitted) < 2:
                     continue
                 (l1, l2) = splitted
 
                 # append the first segment of the cutted edge, set the second segment as the next edge to be cut
-                wkt_list.append(l1)
+                cable_path_list.append(l1)
                 # append all the intermediate asn points
                 coordinate_list.append(coordinate)
                 # append the cable type of the edge for the intermediate segments
-                cable_type_list.append(linestring_to_be_cut_type)
-                linestring_to_be_cut = l2
+                cable_type_list.append(cable_type)
+                path_to_be_cut = l2
 
             # append the last segment of the cutted edge
-            wkt_list.append(linestring_to_be_cut)
-
+            cable_path_list.append(path_to_be_cut)
         else:
-            wkt_list.append(G[city1][city2]['path_wkt'])
-            coordinate_list.append(G.nodes[city1]['coord'])
-            cable_type_list.append(G[city1][city2]['cable_type'])
+            cable_path_list.append(cable_path)
+            coordinate_list.append(city1_coord)
+            cable_type_list.append(cable_type)
 
     # Append the coordinates of the last city after the loop
     coordinate_list.append(G.nodes[shortest_path_cities[-1]]['coord'])
 
-    return total_distance, coordinate_list, MultiLineString(wkt_list).wkt, cable_type_list
+    return total_distance, coordinate_list, MultiLineString(cable_path_list).wkt, cable_type_list
 
 
 def connect_nearby_cities(G, name: str, coordinate: Coordinate, nearby_cities: list[Coordinate],
@@ -301,6 +298,8 @@ def physical_route(src_latitude: float, src_longitude: float,
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
+    perf_start_time = time.time()
+    logging.debug("Received request: src_latitude=%f, src_longitude=%f, dst_latitude=%f, dst_longitude=%f, src_cloud=%s, dst_cloud=%s")
     src_coordinate = (src_latitude, src_longitude)
     dst_coordinate = (dst_latitude, dst_longitude)
     direct_distance_km = haversine(src_coordinate, dst_coordinate)
@@ -315,11 +314,13 @@ def physical_route(src_latitude: float, src_longitude: float,
         }
 
     # Convert input coordinates to city information
+    logging.debug('Finding nearby cities for src and dst')
     src_nearby_cities: list[Coordinate] = find_closest_points(
         (src_latitude, src_longitude), app.coord_set)
     dst_nearby_cities: list[Coordinate] = find_closest_points(
         (dst_latitude, dst_longitude), app.coord_set)
 
+    logging.debug('Connecting nearby cities to the graph')
     G: nx.Graph = app.G.copy()
     coord_city_map: dict[Coordinate, Location] = app.coord_city_map.copy()
     connect_nearby_cities(G, "src", src_coordinate,
@@ -333,17 +334,20 @@ def physical_route(src_latitude: float, src_longitude: float,
     assert src_city and dst_city
 
     # Find shortest path between cities in the graph
+    logging.debug('Finding shortest path between cities in the graph')
     try:
         shortest_path_cities: list[Location] = nx.shortest_path(
             G, source=src_city, target=dst_city, weight='distance')
     except nx.NetworkXNoPath:
         raise HTTPException(status_code=400, detail="No shortest path found")
 
+    logging.debug('Calculating shortest path distance')
     all_clouds = set([src_cloud, dst_cloud])
     as_locations = [location for cloud in all_clouds for location in app.all_as_locations[cloud]]
     shortest_distance, coordinate_list, wkt_list, cable_type_list = \
         calculate_shortest_path_distance(G, shortest_path_cities, as_locations)
 
+    logging.debug(f'Returning response. Total time: {time.time() - perf_start_time}s')
     return {
         'routers_latlon': coordinate_list,
         'distance_km': shortest_distance,
@@ -360,5 +364,5 @@ def run():
 
 
 if __name__ == "__main__":
-    init_logging(level=logging.DEBUG)
+    init_logging(level=logging.INFO)
     run()
