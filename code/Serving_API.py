@@ -35,21 +35,19 @@ def city_formatter(city_info: Location) -> Location:
     return (city.strip(), state.strip(), country.strip())
 
 
-def find_closest_points(point: Coordinate, points_set: set[Coordinate],
-                        max_distance_km=THRESHOLD_ENDPOINT_TO_CITY_MAX_DISTANCE_KM) -> list[Coordinate]:
+def find_closest_points(point: Coordinate, points_set: set[Coordinate]) -> list[Coordinate]:
     """Find the closest point for a given coordinate in case it is not in the graph.
 
     For either endpoint of the request, we find the closest points in the graph within the given threshold.
     """
-    return list(filter(lambda p: haversine(point, p) < max_distance_km, points_set))
+    # Increase threshold to 1.5x minimum distance if no points are within the preset limit
+    min_distance_km = min(haversine(point, p) for p in points_set)
+    threshold_distance_km = THRESHOLD_ENDPOINT_TO_CITY_MAX_DISTANCE_KM
+    if min_distance_km > threshold_distance_km:
+        threshold_distance_km = min_distance_km * 1.5
 
+    return list(filter(lambda p: haversine(point, p) < threshold_distance_km, points_set))
 
-def find_closest_point_distance(point: Coordinate, points_set: set[Coordinate]) -> float:
-    """Find the closest point for a given coordinate in case it is not in the graph.
-
-    For either endpoint of the request, we find the closest points in the graph within the given threshold.
-    """
-    return min(map(lambda p: haversine(point, p), points_set))
 
 def add_edge(G, city1: Location, city2: Location, distance: float, path_wkt: str,
              src_city_coord: Coordinate, dst_city_coord: Coordinate, cable_type: str):
@@ -324,16 +322,6 @@ def physical_route(src_latitude: float, src_longitude: float,
     logging.debug('Finding nearby cities for src and dst')
     src_nearby_cities: list[Coordinate] = find_closest_points(src_coordinate, app.coord_set)
     dst_nearby_cities: list[Coordinate] = find_closest_points(dst_coordinate, app.coord_set)
-
-    if len(src_nearby_cities) == 0 or len(dst_nearby_cities) == 0:
-        error = "No nearby cities found. "
-        if len(src_nearby_cities) == 0:
-            src_closest_city_distance = find_closest_point_distance(src_coordinate, app.coord_set)
-            error += f"Closest city to src: {src_closest_city_distance} km. "
-        if len(dst_nearby_cities) == 0:
-            dst_closest_city_distance = find_closest_point_distance(dst_coordinate, app.coord_set)
-            error += f"Closest city to dst: {dst_closest_city_distance} km. "
-        raise HTTPException(status_code=400, detail=error)
 
     logging.debug('Connecting nearby cities to the graph')
     G: nx.Graph = app.G.copy()
