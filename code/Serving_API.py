@@ -24,9 +24,9 @@ Location = tuple[str, str, str]
 # Minimum distance between two cities to be considered as different cities
 THRESHOLD_SAME_CITY_DISTANCE_KM = 5
 # Maximum distance from either endpoint to a city in ths existing graph to add an edge
-THRESHOLD_ENDPOINT_TO_HOP_MAX_DISTANCE_KM = 150
+THRESHOLD_ENDPOINT_TO_CITY_MAX_DISTANCE_KM = 150
 # Minimum distance between new AS location to insert and existing cities
-THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM = 100
+THRESHOLD_AS_LOCATION_TO_CITY_MIN_DISTANCE_KM = 100
 # Maximum distance between new AS location to insert and existing paths
 THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM = 50
 
@@ -36,7 +36,7 @@ def city_formatter(city_info: Location) -> Location:
 
 
 def find_closest_points(point: Coordinate, points_set: set[Coordinate],
-                        max_distance_km=THRESHOLD_ENDPOINT_TO_HOP_MAX_DISTANCE_KM) -> list[Coordinate]:
+                        max_distance_km=THRESHOLD_ENDPOINT_TO_CITY_MAX_DISTANCE_KM) -> list[Coordinate]:
     """Find the closest point for a given coordinate in case it is not in the graph.
 
     For either endpoint of the request, we find the closest points in the graph within the given threshold.
@@ -219,7 +219,7 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
         logging.debug(f'Processing edge {city1} -> {city2} with distance {distance_km} km')
 
         # Skip AS location search if the distance between two cities is too small
-        search_for_nearby_as_locations = distance_km > THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM
+        search_for_nearby_as_locations = distance_km > THRESHOLD_AS_LOCATION_TO_CITY_MIN_DISTANCE_KM
         if search_for_nearby_as_locations:
             nearby_as_points = get_points_close_to_path(as_locations, cable_path,
                                                         THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM)
@@ -239,7 +239,7 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
                 # Point is in (lon, lat) format, but coordinate is in (lat, lon) format
                 coordinate = (point.y, point.x)
                 # Skip this new location if it is too close to the last node or next city
-                min_distance_to_insert = THRESHOLD_AS_LOCATION_TO_HOP_MIN_DISTANCE_KM
+                min_distance_to_insert = THRESHOLD_AS_LOCATION_TO_CITY_MIN_DISTANCE_KM
                 if haversine(coordinate_list[-1], coordinate) < min_distance_to_insert or \
                         haversine(coordinate, city2_coord) < min_distance_to_insert:
                     continue
