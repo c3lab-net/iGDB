@@ -361,7 +361,7 @@ def physical_route(src_latitude: float, src_longitude: float,
     logging.debug('Finding shortest path between cities in the graph')
     try:
         shortest_path_cities: list[Location] = nx.shortest_path(
-            G, source=src_city, target=dst_city, weight='distance')
+            G, source=src_city, target=dst_city, weight='weight')
     except nx.NetworkXNoPath:
         raise HTTPException(status_code=400, detail="No shortest path found")
 
