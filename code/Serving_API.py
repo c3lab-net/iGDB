@@ -26,7 +26,7 @@ Location = tuple[str, str, str]
 # Minimum distance between two cities to be considered as different cities
 THRESHOLD_SAME_CITY_DISTANCE_KM = 5
 # Maximum distance from either endpoint to a city in ths existing graph to add an edge
-THRESHOLD_ENDPOINT_TO_CITY_MAX_DISTANCE_KM = 150
+THRESHOLD_ENDPOINT_TO_CITY_MAX_DISTANCE_KM = 50
 # Minimum distance between new AS location to insert and existing cities
 THRESHOLD_AS_LOCATION_TO_CITY_MIN_DISTANCE_KM = 100
 # Maximum distance between new AS location to insert and existing paths
