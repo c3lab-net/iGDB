@@ -308,6 +308,9 @@ def connect_nearby_cities(G, name: str, coordinate: Coordinate, nearby_cities: l
     for nearby_city in nearby_cities:
         nearby_city_name = coord_city_map[nearby_city]
         distance_km = haversine(coordinate, nearby_city)
+        # Avoid self-edge if coordinates are the same.
+        if are_coordinates_close(coordinate, nearby_city):
+            continue
         add_edge(G, node_name, nearby_city_name, distance_km,
                  create_linestring_from_latlon_list([coordinate, nearby_city]), coordinate, nearby_city, 'land')
         add_edge(G, nearby_city_name, node_name, distance_km,
