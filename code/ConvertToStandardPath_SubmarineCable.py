@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -344,6 +345,7 @@ def insert_submarine_standard_paths_to_database(db_file, submarine_standard_path
 
 
 def get_all_submarine_standard_paths(db_file: str) -> list[tuple]:
+    logging.info('Loading submarine standard paths from database ...')
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """

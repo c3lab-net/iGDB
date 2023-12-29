@@ -1,3 +1,4 @@
+import logging
 import sqlite3
 import sys
 from haversine import haversine
@@ -80,6 +81,7 @@ def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_m
 
 
 def get_all_submarine_to_standard_paths_pairs(db_file):
+    logging.info('Loading submarine to standard paths pairs from database ...')
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """

@@ -83,6 +83,7 @@ def add_edge(G, city1: Location, city2: Location, distance: float, path_wkt: str
 
 def get_all_standard_paths(db_file: str):
     """read standard paths from database"""
+    logging.info('Loading standard paths from database ...')
     with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
         sql_query = """
@@ -97,6 +98,7 @@ def get_all_standard_paths(db_file: str):
 # fetch all asn locations related to amazon from database
 def get_as_locations(db_file, cloud_region_scope) -> list[Coordinate]:
     """read asn locations from database"""
+    logging.info(f'Loading AS locations of "{cloud_region_scope}" from database ...')
     coordinates: list[Coordinate] = []
     with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
@@ -141,13 +143,14 @@ def parse_wkt_linestring(wkt_string: str) -> LineString:
     try:
         return wkt.loads(wkt_string)
     except Exception as ex:
-        print(f"wkt string {wkt_string} is not valid: {ex}", file=sys.stderr)
+        logging.warning(f"wkt string {wkt_string} is not valid: {ex}")
         return None
 
 
 def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], coordinates: set[Coordinate],
                        paths: list[tuple], submarine_option=False) -> \
         tuple[nx.Graph, dict[Coordinate, Location], set[Coordinate]]:
+    logging.info(f'Adding {len(paths)} paths to graph ...')
     for from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt in paths:
 
         from_city_info = city_formatter((from_city, from_state, from_country))
@@ -156,7 +159,7 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
             continue
         linestring = parse_wkt_linestring(path_wkt)
         if linestring is None:
-            print(f"invalid wkt string {path_wkt}", file=sys.stderr)
+            logging.warning(f"invalid wkt string {path_wkt}")
             continue
         start_city_coord = linestring.coords[0]
         end_city_coord = linestring.coords[-1]
@@ -181,27 +184,31 @@ def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], 
 
 
 def build_up_global_graph(db_file) -> tuple[dict[Coordinate, Location], set[Coordinate], nx.Graph, dict[str, list[Coordinate]]]:
-    print("Building up NX graph from paths...")
-    submarine_standard_paths = get_all_submarine_standard_paths(db_file)
-    submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(
-        db_file)
-    standard_paths = get_all_standard_paths(db_file)
+    logging.info("Building up NX graph from paths...")
 
-    all_as_locations = {}
-    all_as_locations['aws'] = get_as_locations(db_file, 'amazon')
-    all_as_locations['gcloud'] = get_as_locations(db_file, 'google')
-
+    # Build graphs from the following three tables of edges.
     G = nx.DiGraph()
     coord_city_map: dict[Coordinate, Location] = {}
     coord_set: set[Coordinate] = []
 
+    standard_paths = get_all_standard_paths(db_file)
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, standard_paths)
+
+    submarine_standard_paths = get_all_submarine_standard_paths(db_file)
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, submarine_standard_paths, True)
+
+    submarine_to_standard_paths_pairs = get_all_submarine_to_standard_paths_pairs(db_file)
     G, coord_city_map, coord_set = graph_build_helper(
         G, coord_city_map, coord_set, submarine_to_standard_paths_pairs)
 
+    # Build list of AS locations.
+    all_as_locations = {}
+    all_as_locations['aws'] = get_as_locations(db_file, 'amazon')
+    all_as_locations['gcloud'] = get_as_locations(db_file, 'google')
+
+    logging.info("Finished building graph.")
     return coord_city_map, set(coord_set), G, all_as_locations
 
 
@@ -380,6 +387,7 @@ def physical_route(src_latitude: float, src_longitude: float,
     }
 
 def run():
+    init_logging(level=logging.INFO)
     app.db_file = '../database/igdb.db'
     app.coord_city_map, app.coord_set, app.G, app.all_as_locations = \
         build_up_global_graph(app.db_file)
@@ -388,5 +396,4 @@ def run():
 
 
 if __name__ == "__main__":
-    init_logging(level=logging.INFO)
     run()
