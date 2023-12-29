@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 
 import logging
+import math
 import time
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths
@@ -49,10 +51,28 @@ def find_closest_points(point: Coordinate, points_set: set[Coordinate]) -> list[
     return list(filter(lambda p: haversine(point, p) < threshold_distance_km, points_set))
 
 
+def are_coordinates_close(coordinate1: Coordinate, coordinate2: Coordinate,
+                          max_distance_km: Optional[float] = None) -> bool:
+    """Check whether two coordinates are close to each other.
+
+        If max distance is specified, this function compares the distance; otherwise, it compares lat/lon numbers."""
+    if max_distance_km:
+        return haversine(coordinate1, coordinate2) < max_distance_km
+    else:
+        return math.isclose(coordinate1[0], coordinate2[0]) and math.isclose(coordinate1[1], coordinate2[1])
+
 def add_edge(G, city1: Location, city2: Location, distance: float, path_wkt: str,
              src_city_coord: Coordinate, dst_city_coord: Coordinate, cable_type: str):
     """helper function to build nx graph with src/dst city, src/dst coordinates, wkt path, cabel type and distance."""
     # Add or update nodes with their coordinates
+    if city1 in G.nodes and not are_coordinates_close(G.nodes[city1]["coord"], src_city_coord,
+                                                      THRESHOLD_SAME_CITY_DISTANCE_KM):
+        logging.warning(f'City {city1} at {G.nodes[city1]["coord"]} exists already! '
+                     f'Distance: {haversine(G.nodes[city1]["coord"], src_city_coord)}km')
+    if city2 in G.nodes and not are_coordinates_close(G.nodes[city2]["coord"], dst_city_coord,
+                                                      THRESHOLD_SAME_CITY_DISTANCE_KM):
+        logging.warning(f'City {city2} at {G.nodes[city2]["coord"]} exists already! '
+                     f'Distance: {haversine(G.nodes[city2]["coord"], dst_city_coord)}km')
     G.add_node(city1, coord=src_city_coord)
     G.add_node(city2, coord=dst_city_coord)
 
