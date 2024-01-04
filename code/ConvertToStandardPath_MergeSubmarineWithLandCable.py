@@ -1,7 +1,11 @@
+#!/usr/bin/env python3
+
 import logging
 import sqlite3
-import sys
 from haversine import haversine
+from shapely.geometry import LineString
+
+from Common import are_coordinates_close, init_logging, parse_wkt_linestring
 from ConvertToStandardPath_SubmarineCable import coord_list_to_linestring
 
 
@@ -23,23 +27,36 @@ def get_landing_point_coord_from_database(db_file):
     return set(landing_point_coord)
 
 
-def get_phys_nodes_coord_from_database(db_file):
-    print("\tGetting physical nodes coordinates from database...")
-    phys_nodes_coord = []
-    conn = sqlite3.connect(db_file)
-    cursor = conn.cursor()
-    cursor.execute('SELECT pn.latitude, pn.longitude, pn.city, pn.state, pn.country \
-                    FROM phys_nodes pn \
-                    WHERE EXISTS ( \
-                        SELECT 1  \
-                        FROM standard_paths  \
-                        WHERE pn.city = standard_paths.from_city OR pn.city = standard_paths.to_city \
-                    );')
-    datas = cursor.fetchall()
-    for data in datas:
-        phys_nodes_coord.append(data)
-    conn.close()
-    return set(phys_nodes_coord)
+def get_standard_path_city_coord_from_database(db_file):
+    print("\tGetting standard path city coordinates from database...")
+    with sqlite3.connect(db_file) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''SELECT from_city, from_state, from_country, to_city, to_state, to_country, path_wkt
+                        FROM standard_paths;''')
+        all_rows = cursor.fetchall()
+
+    def _add_to_mapping(mapping, city, state, country, lat, lon):
+        key = (city, state, country)
+        value = (lat, lon)
+        if key not in mapping:
+            mapping[key] = value
+        else:
+            orig_value = mapping[key]
+            if not are_coordinates_close(orig_value, value, max_distance_km=10):
+                logging.warning(f'Existing city {key}: {orig_value}; new coordinate: {value};'
+                                f'distance: {haversine(orig_value, value)}km')
+
+    city_to_coordinate_mapping = {}
+    for from_city, from_state, from_country, to_city, to_state, to_country, path_wkt in all_rows:
+        ls: LineString = parse_wkt_linestring(path_wkt)
+        # wkt path is (lon, lat)
+        from_lon, from_lat = ls.coords[0]
+        to_lon, to_lat = ls.coords[-1]
+        _add_to_mapping(city_to_coordinate_mapping, from_city, from_state, from_country, from_lat, from_lon)
+        _add_to_mapping(city_to_coordinate_mapping, to_city, to_state, to_country, to_lat, to_lon)
+
+    return [(lat, lon, city, state, country) for (city, state, country), (lat, lon) in \
+            city_to_coordinate_mapping.items()]
 
 
 def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping):
@@ -67,10 +84,10 @@ def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_m
         path_wkt TEXT \
     );")
 
-    for landing_point, physical_nodes in city_mapping.items():
+    for landing_point, standard_path_city_nodes in city_mapping.items():
         from_city, from_state, from_country, from_coord = landing_point
-        for physical_node in physical_nodes:
-            to_city, to_state, to_country, to_coord, distance = physical_node
+        for standard_path_city_node in standard_path_city_nodes:
+            to_city, to_state, to_country, to_coord, distance = standard_path_city_node
             path_wkt = coord_list_to_linestring([from_coord, to_coord])
             # Execute insert query
             cursor.execute("INSERT INTO submarine_to_standard_paths (from_city, from_state, from_country, to_city, to_state, to_country, distance_km, path_wkt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -81,7 +98,7 @@ def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_m
 
 
 def get_all_submarine_to_standard_paths_pairs(db_file):
-    logging.info('Loading submarine to standard paths pairs from database ...')
+    print('Loading submarine to standard paths pairs from database ...')
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """
@@ -94,40 +111,40 @@ def get_all_submarine_to_standard_paths_pairs(db_file):
 
     return datas
 
-def map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords) -> dict[tuple, list[tuple]]:
-    print("\tMapping landing point cities to nearby physical nodes...")
+def map_landing_point_to_standard_path_cities(landing_point_coords, standard_path_coords) -> dict[tuple, list[tuple]]:
+    print("\tMapping landing point cities to nearby standard path cities...")
     DISTANCE_THRESHOLD_KM = 160
-    city_mapping = {}
+    landing_point_to_standard_path_cities = {}
     for landing_point_lati, landing_point_longti, landing_point_city, landing_point_state, landing_point_country in landing_point_coords:
         landing_point_coord = (landing_point_lati, landing_point_longti)
-        for phys_nodes_lati, phys_nodes_longti, phys_nodes_city, phys_nodes_state, phys_nodes_country in phys_nodes_coords:
-            phys_nodes_coord = (phys_nodes_lati, phys_nodes_longti)
-            if not isinstance(phys_nodes_coord[0], float):
-                continue
-            distance_km = haversine(landing_point_coord, phys_nodes_coord)
+        landing_point = (landing_point_city, landing_point_state, landing_point_country, landing_point_coord)
+        standard_path_city_nodes = []
+        for sp_lat, sp_lon, sp_city, sp_state, sp_country in standard_path_coords:
+            sp_coord = (sp_lat, sp_lon)
+            distance_km = haversine(landing_point_coord, sp_coord)
             if distance_km > DISTANCE_THRESHOLD_KM:
-                # print(
-                    # f"warning for city {landing_point_city}, {landing_point_country} and {phys_nodes_city}, {phys_nodes_country} with distance {distance_km}", file=sys.stderr)
                 continue
+            standard_path_city_node = (sp_city, sp_state, sp_country, sp_coord, distance_km)
+            standard_path_city_nodes.append(standard_path_city_node)
 
-            landing_point = (landing_point_city, landing_point_state, landing_point_country, landing_point_coord)
-            physical_node = (phys_nodes_city, phys_nodes_state, phys_nodes_country, phys_nodes_coord, distance_km)
-            if landing_point not in city_mapping:
-                city_mapping[landing_point] = []
-            city_mapping[landing_point].append(physical_node)
-    return city_mapping
+        logging.debug(f'Landing point {landing_point} close city count: {len(standard_path_city_nodes)}')
+        if len(standard_path_city_nodes) > 0:
+            logging.debug(f'median distance: {standard_path_city_nodes[len(standard_path_city_nodes)//2][4]}km')
+        landing_point_to_standard_path_cities[landing_point] = standard_path_city_nodes
+    return landing_point_to_standard_path_cities
 
 
 def connect_submarine_cable_to_standard_path(db_file: str):
     """Create a new table that connect the submarine cable cities to the closest standard path city."""
     print("Connecting submarine cable to standard path...")
     landing_point_coords = get_landing_point_coord_from_database(db_file)
-    phys_nodes_coords = get_phys_nodes_coord_from_database(db_file)
-    city_mapping = map_landing_point_to_physical_nodes(landing_point_coords, phys_nodes_coords)
+    standard_path_city_coords = get_standard_path_city_coord_from_database(db_file)
+    city_mapping = map_landing_point_to_standard_path_cities(landing_point_coords, standard_path_city_coords)
     insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping)
     print("Done.")
 
 if __name__ == "__main__":
     db_file = '../database/igdb.db'
+    init_logging(level=logging.DEBUG)
     connect_submarine_cable_to_standard_path(db_file)
     get_all_submarine_to_standard_paths_pairs(db_file)
