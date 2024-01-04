@@ -2,6 +2,7 @@
 
 import logging
 import time
+from typing import Optional
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths
@@ -205,7 +206,8 @@ def get_points_close_to_path(coordinates: list[Coordinate], line: LineString, ma
 
 
 def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coordinate],
-                                     as_locations: list[Coordinate]) -> \
+                                     as_locations: list[Coordinate],
+                                     search_for_nearby_as_locations: bool) -> \
         tuple[float, list[Coordinate], str, list[str]]:
     total_distance = 0
     coordinate_list: list[Coordinate] = []
@@ -225,13 +227,14 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
         logging.debug(f'Processing edge {city1} -> {city2} with distance {distance_km} km')
 
         # Skip AS location search if the distance between two cities is too small
-        search_for_nearby_as_locations = distance_km > THRESHOLD_AS_LOCATION_TO_CITY_MIN_DISTANCE_KM
         if search_for_nearby_as_locations:
+            skip_as_location_search = distance_km < THRESHOLD_AS_LOCATION_TO_CITY_MIN_DISTANCE_KM
+        if search_for_nearby_as_locations and not skip_as_location_search:
             nearby_as_points = get_points_close_to_path(as_locations, cable_path,
                                                         THRESHOLD_AS_LOCATION_TO_PATH_MAX_DISTANCE_KM)
 
         # If there are AS locations nearby, we need to cut the edge into multiple segments at theses locations
-        if search_for_nearby_as_locations and len(nearby_as_points) > 0:
+        if search_for_nearby_as_locations and not skip_as_location_search and len(nearby_as_points) > 0:
             # sort the AS location points by distance to the start point of the edge
             nearby_as_points = sorted(nearby_as_points, key=lambda p: cable_path.project(p))
 
@@ -303,12 +306,22 @@ app = FastAPI()
 @app.get("/physical-route/")
 def physical_route(src_latitude: float, src_longitude: float,
                    dst_latitude: float, dst_longitude: float,
-                   src_cloud: str, dst_cloud: str) -> dict:
+                   src_cloud: str = None, dst_cloud: str = None,
+                   search_for_nearby_as_locations: bool = False) -> dict:
     """
     Get the physical route in (lat, lon) format from src to dst, including both ends.
     """
     perf_start_time = time.time()
-    logging.debug("Received request: src_latitude=%f, src_longitude=%f, dst_latitude=%f, dst_longitude=%f, src_cloud=%s, dst_cloud=%s")
+    logging.debug(f"Received request: src_latitude={src_latitude}, src_longitude={src_longitude}, "
+                  f"dst_latitude={dst_latitude}, dst_longitude={dst_longitude}, "
+                  f"src_cloud={src_cloud}, dst_cloud={dst_cloud}, "
+                  f"search_for_as_locations={search_for_nearby_as_locations}")
+    if search_for_nearby_as_locations:
+        if src_cloud not in app.all_as_locations:
+            raise HTTPException(status_code=400, detail="src_cloud not recognized or supported")
+        if dst_cloud not in app.all_as_locations:
+            raise HTTPException(status_code=400, detail="dst_cloud not recognized or supported")
+
     src_coordinate = (src_latitude, src_longitude)
     dst_coordinate = (dst_latitude, dst_longitude)
     direct_distance_km = haversine(src_coordinate, dst_coordinate)
@@ -348,9 +361,9 @@ def physical_route(src_latitude: float, src_longitude: float,
 
     logging.debug('Calculating shortest path distance')
     all_clouds = set([src_cloud, dst_cloud])
-    as_locations = [location for cloud in all_clouds for location in app.all_as_locations[cloud]]
+    as_locations = [location for cloud in all_clouds if cloud for location in app.all_as_locations[cloud]]
     shortest_distance, coordinate_list, wkt_list, cable_type_list = \
-        calculate_shortest_path_distance(G, shortest_path_cities, as_locations)
+        calculate_shortest_path_distance(G, shortest_path_cities, as_locations, search_for_nearby_as_locations)
 
     logging.debug(f'Returning response. Total time: {time.time() - perf_start_time}s')
     return {
