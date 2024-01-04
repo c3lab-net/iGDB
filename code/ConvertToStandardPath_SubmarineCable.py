@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+
+import logging
 import sqlite3
 import networkx as nx
 import matplotlib.pyplot as plt
@@ -5,6 +8,8 @@ import itertools
 from networkx.exception import NetworkXNoPath
 from geopy.distance import geodesic
 import ast
+
+from Common import init_logging
 
 
 def floatFormatter(number):
@@ -197,7 +202,7 @@ def get_data_from_database(db_file):
 
 
     """
-    print("\tGetting submarine cable data from database...")
+    logging.info("\tGetting submarine cable data from database...")
     global whole_data
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
@@ -267,7 +272,7 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
 
 
     """
-    print("\tCalculating distance between cable landing points...")
+    logging.info("\tCalculating distance between cable landing points...")
     submarine_standard_paths = []
     for cable_id, cities_info in cable_id_to_cities.items():
         # Build up the graph for cable
@@ -296,7 +301,7 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
                     graph, source=start_city_coord, target=end_city_coord, weight='weight')
                 shortest_path_length = nx.shortest_path_length(
                     graph, source=start_city_coord, target=end_city_coord, weight='weight')
-                # print(
+                # logging.info(
                 #      f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} has shortest_path_length {shortest_path_length} consist of {shortest_path}")
                 submarine_standard_paths.append(((start_city_name, start_city_state, start_city_country,
                                                   end_city_name, end_city_state, end_city_country,
@@ -305,13 +310,13 @@ def calculate_distance_between_cable_landing_points(cable_id_to_cities, cable_id
                 '''This will catch the exception when the cities on the cable will not form a connected graph.
                 which means there is no path betweent the city pair. We simply omit it by continue.'''
                 continue
-                # print(
+                # logging.info(
                 #     f"city {start_city_name}, {start_city_state}, {start_city_country}, {start_city_coord}, city {end_city_name}, {end_city_state}, {end_city_country}, {end_city_coord} on {cable_id} does not have shortest_path_length")
     return submarine_standard_paths
 
 
 def insert_submarine_standard_paths_to_database(db_file, submarine_standard_paths):
-    print("\tInserting submarine standard paths to database...")
+    logging.info("\tInserting submarine standard paths to database...")
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
 
@@ -344,6 +349,7 @@ def insert_submarine_standard_paths_to_database(db_file, submarine_standard_path
 
 
 def get_all_submarine_standard_paths(db_file: str) -> list[tuple]:
+    logging.info('Loading submarine standard paths from database ...')
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """
@@ -358,15 +364,16 @@ def get_all_submarine_standard_paths(db_file: str) -> list[tuple]:
 
 def add_submarine_cable_like_standard_path(db_file: str):
     """Add submarine cable in standard path format to a new table."""
-    print("Adding submarine cable like standard path to database...")
+    logging.info("Adding submarine cable like standard path to database...")
     cable_id_to_cities, cable_id_to_wkt = get_data_from_database(db_file)
     submarine_standard_paths = calculate_distance_between_cable_landing_points(
         cable_id_to_cities, cable_id_to_wkt)
     insert_submarine_standard_paths_to_database(
         db_file, submarine_standard_paths)
-    print("Done.")
+    logging.info("Done.")
 
 if __name__ == "__main__":
     db_file = '../database/igdb.db'
+    init_logging()
     add_submarine_cable_like_standard_path(db_file)
     get_all_submarine_standard_paths(db_file)
