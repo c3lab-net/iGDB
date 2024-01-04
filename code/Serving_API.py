@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 
 import logging
-import math
 import time
-from typing import Optional
 from fastapi import FastAPI, HTTPException
 from ConvertToStandardPath_MergeSubmarineWithLandCable import get_all_submarine_to_standard_paths_pairs
 from ConvertToStandardPath_SubmarineCable import get_all_submarine_standard_paths
@@ -11,16 +9,11 @@ import sqlite3
 import networkx as nx
 from haversine import haversine
 import geopandas as gpd
-import sys
 
-from shapely import wkt, Point
+from shapely import Point
 from shapely.geometry import LineString, MultiLineString
 from Processing_CloudRegions import cut_linestring
-from Common import init_logging
-
-
-Coordinate = tuple[float, float]
-Location = tuple[str, str, str]
+from Common import are_coordinates_close, init_logging, parse_wkt_linestring, Coordinate, Location
 
 
 # Minimum distance between two cities to be considered as different cities
@@ -50,16 +43,6 @@ def find_closest_points(point: Coordinate, points_set: set[Coordinate]) -> list[
 
     return list(filter(lambda p: haversine(point, p) < threshold_distance_km, points_set))
 
-
-def are_coordinates_close(coordinate1: Coordinate, coordinate2: Coordinate,
-                          max_distance_km: Optional[float] = None) -> bool:
-    """Check whether two coordinates are close to each other.
-
-        If max distance is specified, this function compares the distance; otherwise, it compares lat/lon numbers."""
-    if max_distance_km:
-        return haversine(coordinate1, coordinate2) < max_distance_km
-    else:
-        return math.isclose(coordinate1[0], coordinate2[0]) and math.isclose(coordinate1[1], coordinate2[1])
 
 def add_edge(G, city1: Location, city2: Location, distance: float, path_wkt: str,
              src_city_coord: Coordinate, dst_city_coord: Coordinate, cable_type: str):
@@ -136,15 +119,6 @@ def coordinate_reverser(coord: Coordinate) -> Coordinate:
 def create_linestring_from_latlon_list(latlon_list: list[Coordinate]) -> LineString:
     """helper function to create a linestring from a list of latlon"""
     return LineString([coordinate_reverser(coord) for coord in latlon_list])
-
-
-def parse_wkt_linestring(wkt_string: str) -> LineString:
-    """helper function to get the src/dst coordinate from a wkt path"""
-    try:
-        return wkt.loads(wkt_string)
-    except Exception as ex:
-        logging.warning(f"wkt string {wkt_string} is not valid: {ex}")
-        return None
 
 
 def graph_build_helper(G: nx.Graph, coord_city_map: dict[Coordinate, Location], coordinates: set[Coordinate],
