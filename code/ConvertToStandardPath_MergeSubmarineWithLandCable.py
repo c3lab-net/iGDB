@@ -130,6 +130,9 @@ def map_landing_point_to_standard_path_cities(landing_point_coords, standard_pat
         logging.debug(f'Landing point {landing_point} close city count: {len(standard_path_city_nodes)}')
         if len(standard_path_city_nodes) > 0:
             logging.debug(f'median distance: {standard_path_city_nodes[len(standard_path_city_nodes)//2][4]}km')
+        # Map each landing point to three closest cities
+        MAX_NODES = 3
+        standard_path_city_nodes = sorted(standard_path_city_nodes, key=lambda n: n[4])[:MAX_NODES]
         landing_point_to_standard_path_cities[landing_point] = standard_path_city_nodes
     return landing_point_to_standard_path_cities
 
