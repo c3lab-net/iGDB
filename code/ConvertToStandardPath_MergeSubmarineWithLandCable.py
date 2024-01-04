@@ -10,7 +10,7 @@ from ConvertToStandardPath_SubmarineCable import coord_list_to_linestring
 
 
 def get_landing_point_coord_from_database(db_file):
-    print("\tGetting landing point coordinates from database...")
+    logging.info("\tGetting landing point coordinates from database...")
     landing_point_coord = []
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
@@ -28,7 +28,7 @@ def get_landing_point_coord_from_database(db_file):
 
 
 def get_standard_path_city_coord_from_database(db_file):
-    print("\tGetting standard path city coordinates from database...")
+    logging.info("\tGetting standard path city coordinates from database...")
     with sqlite3.connect(db_file) as conn:
         cursor = conn.cursor()
         cursor.execute('''SELECT from_city, from_state, from_country, to_city, to_state, to_country, path_wkt
@@ -60,7 +60,7 @@ def get_standard_path_city_coord_from_database(db_file):
 
 
 def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping):
-    print("\tAdding new mapping to database...")
+    logging.info("\tAdding new mapping to database...")
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
 
@@ -98,7 +98,7 @@ def insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_m
 
 
 def get_all_submarine_to_standard_paths_pairs(db_file):
-    print('Loading submarine to standard paths pairs from database ...')
+    logging.info('Loading submarine to standard paths pairs from database ...')
     conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
     sql_query = """
@@ -112,7 +112,7 @@ def get_all_submarine_to_standard_paths_pairs(db_file):
     return datas
 
 def map_landing_point_to_standard_path_cities(landing_point_coords, standard_path_coords) -> dict[tuple, list[tuple]]:
-    print("\tMapping landing point cities to nearby standard path cities...")
+    logging.info("\tMapping landing point cities to nearby standard path cities...")
     DISTANCE_THRESHOLD_KM = 160
     landing_point_to_standard_path_cities = {}
     for landing_point_lati, landing_point_longti, landing_point_city, landing_point_state, landing_point_country in landing_point_coords:
@@ -139,12 +139,12 @@ def map_landing_point_to_standard_path_cities(landing_point_coords, standard_pat
 
 def connect_submarine_cable_to_standard_path(db_file: str):
     """Create a new table that connect the submarine cable cities to the closest standard path city."""
-    print("Connecting submarine cable to standard path...")
+    logging.info("Connecting submarine cable to standard path...")
     landing_point_coords = get_landing_point_coord_from_database(db_file)
     standard_path_city_coords = get_standard_path_city_coord_from_database(db_file)
     city_mapping = map_landing_point_to_standard_path_cities(landing_point_coords, standard_path_city_coords)
     insert_submarine_city_mapping_to_standard_path_city_database(db_file, city_mapping)
-    print("Done.")
+    logging.info("Done.")
 
 if __name__ == "__main__":
     db_file = '../database/igdb.db'
