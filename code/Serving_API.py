@@ -354,8 +354,15 @@ def physical_route(src_latitude: float, src_longitude: float,
     # Find shortest path between cities in the graph
     logging.debug('Finding shortest path between cities in the graph')
     try:
+        def weight_fn(n1, n2, edge):
+            # Consider both hop count and distance. Balance based on power consumption.
+            #   Power numbers are in W/Gbps and device info is from doi.org/10.1145/3575813.3595192
+            # Each hop: 1 router@10 + 2 WDM switch@0.05 + 1 transponder@1.5 and 1 muxponder@1.5 = 13.1W/Gbps
+            # Each 1000km: 1000/80 amplifier@0.03 + 1000/1500 regenerator@3 = 2.375 W/Gbps
+            # Breakeven point: 1 hop = 13.1/2.375 = 5.5km
+            return 1 + edge['weight'] / 5500
         shortest_path_cities: list[Location] = nx.shortest_path(
-            G, source=src_city, target=dst_city, weight='weight')
+            G, source=src_city, target=dst_city, weight=weight_fn)
     except nx.NetworkXNoPath:
         raise HTTPException(status_code=400, detail="No shortest path found")
 
