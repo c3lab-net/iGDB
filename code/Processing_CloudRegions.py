@@ -35,8 +35,11 @@ def find_closest_paths(lat: float, lon: float, db_path: str, max_distance: float
 
 # Taken from stackoverflow
 # https://stackoverflow.com/questions/39425093/break-a-shapely-linestring-at-multiple-points
-def cut_linestring(line: LineString, distance: float = nan, to_add: Point = None) -> list[LineString]:
-    """Cuts a linestring in two, either at a distance from its starting point, or at a location closest to the given point. If distance or point is at either end, then not cut is performed and only one linestring is returned."""
+def cut_linestring(line: LineString, distance: float = nan, to_add: Point = None) -> tuple[list[LineString], bool]:
+    """Cuts a linestring in two, either at a distance from its starting point, or at a location closest to the given point. If distance or point is at either end, then not cut is performed and only one linestring is returned.
+
+    Also returns whether new segment was added, if the linestring is cut into two. This happens when the point to add is not on the linestring, and thus a new segment from the added point to the closest point on path is added on both linestrings.
+    """
     logging.debug(f"Cutting linestring {line} at distance {distance} or point {to_add}")
     logging.debug(f"Line length: {line.length}")
 
@@ -46,7 +49,7 @@ def cut_linestring(line: LineString, distance: float = nan, to_add: Point = None
         logging.debug(f"Distance from point to line: {distance}")
 
     if isclose(distance, 0.0) or isclose(distance, line.length):
-        return [LineString(line)]
+        return [LineString(line)], False
     elif distance < 0.0 or distance > line.length:
         raise ValueError(f"Distance out of range! {distance} {line.length} {line} {to_add}")
 
@@ -57,12 +60,12 @@ def cut_linestring(line: LineString, distance: float = nan, to_add: Point = None
         if pd == distance:
             return [
                 LineString(coords[:i+1]),
-                LineString(coords[i:])]
+                LineString(coords[i:])], False
         if pd > distance:
             cp = line.interpolate(distance)
             return [
                 LineString(coords[:i] + [(cp.x, cp.y)] + [(to_add.x, to_add.y)]),
-                LineString([(to_add.x, to_add.y)] + [(cp.x, cp.y)] + coords[i:])]
+                LineString([(to_add.x, to_add.y)] + [(cp.x, cp.y)] + coords[i:])], True
 
 
 def distance_of_linestring(ls: LineString) -> float:
@@ -112,7 +115,7 @@ def add_cloud_regions_to_standard_paths(db_path: str,
 
         for row in rows.itertuples(index=False):
             linestring: LineString = wkt.loads(row[7])
-            splitted = cut_linestring(linestring, to_add=Point(lon, lat))
+            splitted, _ = cut_linestring(linestring, to_add=Point(lon, lat))
             if len(splitted) < 2:
                 continue
             (l1, l2) = splitted

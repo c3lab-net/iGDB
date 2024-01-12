@@ -36,3 +36,7 @@ def are_coordinates_close(coordinate1: Coordinate, coordinate2: Coordinate,
         return haversine(coordinate1, coordinate2) < max_distance_km
     else:
         return math.isclose(coordinate1[0], coordinate2[0]) and math.isclose(coordinate1[1], coordinate2[1])
+
+def flip_coordinate(coordinate: Coordinate) -> Coordinate:
+    """Flip the coordinate from (lat, lon) to (lon, lat), or vice versa."""
+    return (coordinate[1], coordinate[0])

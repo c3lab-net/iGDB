@@ -14,7 +14,7 @@ import geopandas as gpd
 from shapely import Point
 from shapely.geometry import LineString, MultiLineString
 from Processing_CloudRegions import cut_linestring
-from Common import are_coordinates_close, init_logging, parse_wkt_linestring, Coordinate, Location
+from Common import are_coordinates_close, flip_coordinate, init_logging, parse_wkt_linestring, Coordinate, Location
 
 
 # Minimum distance between two cities to be considered as different cities
@@ -252,10 +252,18 @@ def calculate_shortest_path_distance(G: nx.Graph, shortest_path_cities: list[Coo
                 if haversine(coordinate_list[-1], coordinate) < min_distance_to_insert or \
                         haversine(coordinate, city2_coord) < min_distance_to_insert:
                     continue
-                splitted = cut_linestring(path_to_be_cut, to_add=point)
+                splitted, has_new_segment = cut_linestring(path_to_be_cut, to_add=point)
                 if len(splitted) < 2:
                     continue
                 (l1, l2) = splitted
+                # A new segment is added if the point is not on the edge, so we need to add the distance of the new segment on both linestrings.
+                if has_new_segment:
+                    # linestring coordinates are in (lon, lat) format, but haversine needs (lat, lon) format.
+                    extra_segment_start_coordinate = flip_coordinate(l2.coords[0])
+                    extra_segment_end_coordinate = flip_coordinate(l2.coords[1])
+                    extra_segment_distance_km = haversine(extra_segment_start_coordinate,
+                                                          extra_segment_end_coordinate)
+                    total_distance += 2 * extra_segment_distance_km
 
                 # append the first segment of the cutted edge, set the second segment as the next edge to be cut
                 cable_path_list.append(l1)
